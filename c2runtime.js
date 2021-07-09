@@ -19633,7 +19633,7 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Sprite.prototype.acts.LoadURL,
 	cr.plugins_.Facebook.prototype.exps.UserIDStr,
 	cr.plugins_.Text.prototype.acts.SetText,
-	cr.system_object.prototype.cnds.CompareTime,
+	cr.system_object.prototype.cnds.EveryTick,
 	cr.plugins_.Photon.prototype.acts.raiseEvent,
 	cr.plugins_.Photon.prototype.exps.MyActorNr,
 	cr.system_object.prototype.exps.str,
