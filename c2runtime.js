@@ -19614,12 +19614,12 @@ cr.plugins_.Touch = function(runtime)
 	pluginProto.exps = new Exps();
 }());
 cr.getObjectRefTable = function () { return [
+	cr.plugins_.Touch,
+	cr.plugins_.Text,
+	cr.plugins_.Photon,
+	cr.plugins_.Sprite,
 	cr.plugins_.AJAX,
 	cr.plugins_.Facebook,
-	cr.plugins_.Sprite,
-	cr.plugins_.Text,
-	cr.plugins_.Touch,
-	cr.plugins_.Photon,
 	cr.plugins_.Touch.prototype.cnds.OnTapGestureObject,
 	cr.plugins_.Facebook.prototype.acts.LogIn2,
 	cr.plugins_.Photon.prototype.acts.connect,
@@ -19634,6 +19634,7 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Facebook.prototype.exps.UserIDStr,
 	cr.plugins_.Text.prototype.acts.SetText,
 	cr.plugins_.AJAX.prototype.acts.Post,
+	cr.system_object.prototype.cnds.CompareTime,
 	cr.plugins_.Photon.prototype.acts.raiseEvent,
 	cr.plugins_.Photon.prototype.exps.MyActorNr,
 	cr.system_object.prototype.exps.str,
