@@ -19171,11 +19171,9 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Touch.prototype.cnds.OnTapGestureObject,
 	cr.plugins_.Facebook.prototype.acts.LogIn2,
 	cr.plugins_.Facebook.prototype.cnds.OnLogIn,
-	cr.plugins_.Dictionary.prototype.acts.AddKey,
-	cr.plugins_.Facebook.prototype.exps.UserIDStr,
-	cr.plugins_.Dictionary.prototype.cnds.HasKey,
+	cr.plugins_.Sprite.prototype.acts.SetVisible,
 	cr.plugins_.AJAX.prototype.acts.Post,
-	cr.plugins_.Dictionary.prototype.exps.CurrentKey,
+	cr.plugins_.Facebook.prototype.exps.UserIDStr,
 	cr.plugins_.AJAX.prototype.cnds.OnComplete,
 	cr.plugins_.Photon.prototype.acts.connect,
 	cr.plugins_.Photon.prototype.cnds.onJoinedLobby,
@@ -19183,9 +19181,9 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Photon.prototype.cnds.onJoinRandomRoomNoMatchFound,
 	cr.plugins_.Photon.prototype.acts.createRoom,
 	cr.plugins_.Photon.prototype.cnds.onJoinRoom,
-	cr.plugins_.Sprite.prototype.acts.SetVisible,
 	cr.plugins_.Photon.prototype.acts.raiseEvent,
 	cr.plugins_.Photon.prototype.exps.MyActorNr,
 	cr.plugins_.Photon.prototype.cnds.onEvent,
-	cr.plugins_.Sprite.prototype.acts.LoadURL
+	cr.plugins_.Sprite.prototype.acts.LoadURL,
+	cr.plugins_.Dictionary.prototype.exps.CurrentKey
 ];};
