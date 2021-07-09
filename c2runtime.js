@@ -20368,5 +20368,6 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Multiplayer.prototype.cnds.IsHost,
 	cr.system_object.prototype.cnds.EveryTick,
 	cr.plugins_.AJAX.prototype.acts.Request,
+	cr.system_object.prototype.acts.SetVar,
 	cr.plugins_.AJAX.prototype.exps.LastData
 ];};
