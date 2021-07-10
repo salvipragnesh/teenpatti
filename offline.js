@@ -1,5 +1,5 @@
 ﻿{
-	"version": 1625862903,
+	"version": 1625909675,
 	"fileList": [
 		"data.js",
 		"c2runtime.js",
@@ -12,6 +12,11 @@
 		"icon-128.png",
 		"icon-256.png",
 		"loading-logo.png",
-		"channel.html"
+		"channel.html",
+		"c2mp-net.js",
+		"c2mp-peer.js",
+		"c2mp.js",
+		"waker.js",
+		"Photon-Javascript_SDK.min.js"
 	]
 }

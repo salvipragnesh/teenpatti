@@ -15934,6 +15934,1946 @@ cr.plugins_.Facebook = function(runtime)
 }());
 ;
 ;
+cr.plugins_.Multiplayer = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Multiplayer.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	var isSupported = false;
+	var serverlist = [];
+	instanceProto.onCreate = function()
+	{
+		this.mp = null;
+		isSupported = window["C2Multiplayer_IsSupported"]();
+		if (isSupported && typeof window["C2Multiplayer"] !== "undefined")
+			this.mp = new window["C2Multiplayer"]();
+		this.signallingUrl = "";
+		this.errorMsg = "";
+		this.peerID = "";
+		this.peerAlias = "";
+		this.leaveReason = "";
+		this.msgContent = "";
+		this.msgTag = "";
+		this.msgFromId = "";
+		this.msgFromAlias = "";
+		this.typeToRo = {};
+		this.instToPeer = {};
+		this.peerToInst = {};
+		this.gameInstanceList = null;
+		this.roomList = null;
+		this.wakerWorker = null;
+		this.inputPredictObjects = [];
+		this.trackObjects = [];				// objects to keep a history for
+		this.objectHistories = {};
+		var self = this;
+		if (isSupported)
+		{
+			this.mp["onserverlist"] = function (servers) {
+				serverlist = servers;
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnServerList, self);
+			};
+			this.mp["onsignallingerror"] = function (e) {
+				self.setError(e);
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnSignallingError, self);
+			};
+			this.mp["onsignallingclose"] = function () {
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnSignallingDisconnected, self);
+				self.signallingUrl = "";
+			};
+			this.mp["onsignallingwelcome"] = function () {
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnSignallingConnected, self);
+			};
+			this.mp["onsignallinglogin"] = function () {
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnSignallingLoggedIn, self);
+			};
+			this.mp["onsignallingjoin"] = function (became_host) {
+				self.instToPeer = {};
+				self.peerToInst = {};
+				self.trackObjects.length = 0;
+				self.inputPredictObjects.length = 0;
+				self.objectHistories = {};
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnSignallingJoinedRoom, self);
+				if (self.runtime.isSuspended && became_host)
+				{
+					self.wakerWorker.postMessage("start");
+				}
+			};
+			this.mp["onsignallingleave"] = function () {
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnSignallingLeftRoom, self);
+			};
+			this.mp["onsignallingkicked"] = function () {
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnSignallingKicked, self);
+			};
+			this.mp["onbeforeclientupdate"] = function () {
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnClientUpdate, self);
+			};
+			this.mp["onpeeropen"] = function (peer) {
+				self.peerID = peer["id"];
+				self.peerAlias = peer["alias"];
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnPeerConnected, self);
+			};
+			this.mp["onpeerclose"] = function (peer, reason) {
+				self.peerID = peer["id"];
+				self.peerAlias = peer["alias"];
+				self.leaveReason = reason || "unknown";
+				var inst = self.getAssociatedInstanceForPeer(peer);
+				if (inst)
+				{
+					var ro = self.typeToRo[inst.type];
+					if (ro)
+						ro["removeObjectNid"](peer["nid"]);
+					self.runtime.DestroyInstance(inst);
+				}
+				if (self.peerToInst.hasOwnProperty(peer["id"]))
+					delete self.peerToInst[peer["id"]];
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnPeerDisconnected, self);
+			};
+			this.mp["onpeermessage"] = function (peer, o) {
+				self.msgTag = o["t"];
+				if (o["f"])
+					self.msgFromId = o["f"];
+				else
+					self.msgFromId = peer["id"];
+				self.msgFromAlias = self.mp["getAliasFromId"](self.msgFromId);
+				self.msgContent = o["m"];
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnAnyPeerMessage, self);
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnPeerMessage, self);
+			};
+			this.mp["onsignallinginstancelist"] = function (list) {
+				self.gameInstanceList = list;
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnGameInstanceList, self);
+			};
+			this.mp["onsignallingroomlist"] = function (list) {
+				self.roomList = list;
+				self.runtime.trigger(cr.plugins_.Multiplayer.prototype.cnds.OnRoomList, self);
+			};
+			this.mp["ongetobjectcount"] = function (obj) {
+				return obj.instances.length;
+			};
+			this.mp["ongetobjectvalue"] = function (obj, index, nv) {
+				if (!nv)
+					return obj.instances[index].uid;
+				var tag = nv["tag"];
+				var inst = obj.instances[index];
+				var value, peer;
+				switch (tag) {
+				case "x":
+					return inst.x;
+				case "y":
+					return inst.y;
+				case "a":
+					return inst.angle;
+				case "iv":
+					if (nv["clientvaluetag"])
+					{
+						peer = self.instToPeer[inst.uid];
+						if (peer && self.mp["me"] !== peer && !peer["wasRemoved"] && peer["hasClientState"](nv["clientvaluetag"]))
+						{
+							return peer["getInterpClientState"](nv["clientvaluetag"]);
+						}
+					}
+					value = inst.instance_vars[nv["userdata"]];
+					if (typeof value === "number")
+						return value;
+					else
+						return 0;
+				default:
+					return 0;
+				}
+			};
+			this.mp["oninstancedestroyed"] = function (ro, nid, timestamp)
+			{
+				var userdata = ro["userdata"];
+				var instmap = userdata.instmap;		// map NID to C2 instance
+				if (!userdata.deadmap)
+					userdata.deadmap = {};
+				var deadmap = userdata.deadmap;
+				deadmap[nid] = timestamp;
+				if (!instmap)
+				{
+					return;
+				}
+				if (instmap.hasOwnProperty(nid))
+				{
+					var inst = instmap[nid];
+					if (inst)
+					{
+						self.runtime.DestroyInstance(inst);
+					}
+					delete instmap[nid];
+				}
+			};
+			this.runtime.addDestroyCallback(function (inst)
+			{
+				var p;
+				var uid = inst.uid;
+				if (self.instToPeer.hasOwnProperty(uid))
+					delete self.instToPeer[uid];
+				for (p in self.peerToInst)
+				{
+					if (self.peerToInst.hasOwnProperty(p))
+					{
+						if (self.peerToInst[p] === inst)
+						{
+							delete self.peerToInst[p];
+							break;
+						}
+					}
+				}
+				if (self.objectHistories.hasOwnProperty(uid))
+					delete self.objectHistories[uid];
+				var i = self.inputPredictObjects.indexOf(inst);
+				if (i > -1)
+					self.inputPredictObjects.splice(i, 1);
+				i = self.trackObjects.indexOf(inst);
+				if (i > -1)
+					self.trackObjects.splice(i, 1);
+				self.mp["removeObjectId"](uid);
+			});
+			this.wakerWorker = new Worker("waker.js");
+			this.wakerWorker.addEventListener("message", function (e) {
+				if (e.data === "tick" && self.runtime.isSuspended)
+				{
+					self.runtime.tick(true);
+				}
+			}, false);
+			this.wakerWorker.postMessage("");
+		}
+		this.runtime.addSuspendCallback(function (s) {
+			if (!isSupported || !self.mp["isHost"]())
+				return;
+			if (s)
+			{
+				self.wakerWorker.postMessage("start");
+			}
+			else
+			{
+				self.wakerWorker.postMessage("stop");
+			}
+		});
+		this.runtime.pretickMe(this);
+	};
+	instanceProto.getAssociatedInstanceForPeer = function (peer)
+	{
+		var peer_id = peer["id"];
+		if (this.peerToInst.hasOwnProperty(peer_id))
+			return this.peerToInst[peer_id];
+		else
+			return null;
+	};
+	instanceProto.isInputPredicting = function (inst)
+	{
+		return this.inputPredictObjects.indexOf(inst) >= 0;
+	};
+	instanceProto.pretick = function ()
+	{
+		if (!isSupported)
+			return;
+		this.mp["tick"](this.runtime.dt1);
+		this.trackObjectHistories();
+		var i, len, ro;
+		if (this.mp["isInRoom"]() && !this.mp["isHost"]())
+		{
+			for (i = 0, len = this.mp["registeredObjects"].length; i < len; ++i)
+			{
+				ro = this.mp["registeredObjects"][i];
+				this.updateRegisteredObject(ro);
+			}
+		}
+	};
+	var netInstToRemove = [];
+	instanceProto.updateRegisteredObject = function (ro)
+	{
+		ro["tick"]();
+		var type = ro["obj"];
+		var count = ro["getCount"]();
+		var netvalues = ro["netvalues"];
+		var userdata = ro["userdata"];
+		if (!userdata.instmap)
+			userdata.instmap = {};
+		var instmap = userdata.instmap;		// map NID to C2 instance
+		var deadmap = userdata.deadmap;
+		var simTime = ro["simTime"];
+		var i, netinst, nid, inst, peer, nv, iv, value, j, p, created, lenj = netvalues.length;
+		var p;
+		for (p in instmap)
+		{
+			if (instmap.hasOwnProperty(p))
+			{
+				inst = instmap[p];
+				if (!this.runtime.getObjectByUID(inst.uid))
+					delete instmap[p];
+			}
+		}
+		if (deadmap)
+		{
+			for (p in deadmap)
+			{
+				if (deadmap.hasOwnProperty(p))
+				{
+					if (deadmap[p] < simTime - 3000)
+						delete deadmap[p];
+				}
+			}
+		}
+		for (i = 0; i < count; ++i)
+		{
+			netinst = ro["getNetInstAt"](i);
+			nid = netinst["nid"];
+			if (deadmap && deadmap[nid] >= simTime - 3000)
+			{
+				netInstToRemove.push(netinst);
+				if (instmap.hasOwnProperty(nid))
+				{
+					this.runtime.DestroyInstance(instmap[nid]);
+					delete instmap[nid];
+				}
+				continue;
+			}
+			if (instmap.hasOwnProperty(nid))
+			{
+				inst = instmap[nid];
+				created = false;
+			}
+			else
+			{
+				peer = this.mp["getPeerByNid"](nid);
+				if (peer)
+				{
+					this.peerID = peer["id"];
+					this.peerAlias = peer["alias"];
+				}
+				else
+				{
+					if (ro["hasOverriddenNids"])
+					{
+						continue;
+					}
+					this.peerID = "";
+					this.peerAlias = "";
+				}
+				inst = this.runtime.createInstance(type, this.runtime.running_layout.layers[type.default_layerindex], -1000, -1000);
+				instmap[nid] = inst;
+				created = true;
+			}
+			if (netinst["isTimedOut"](simTime))
+			{
+				netInstToRemove.push(netinst);
+				if (instmap.hasOwnProperty(nid))
+					delete instmap[nid];
+				this.runtime.DestroyInstance(inst);
+				continue;
+			}
+			if (this.isInputPredicting(inst))
+			{
+				this.correctInputPrediction(inst, netinst, netvalues, simTime);
+			}
+			else
+			{
+				for (j = 0; j < lenj; ++j)
+				{
+					value = netinst["getInterp"](simTime, j);
+					nv = netvalues[j];
+					switch (nv["tag"]) {
+					case "x":
+						inst.x = value;
+						inst.set_bbox_changed();
+						break;
+					case "y":
+						inst.y = value;
+						inst.set_bbox_changed();
+						break;
+					case "a":
+						inst.angle = value;
+						inst.set_bbox_changed();
+						break;
+					case "iv":
+						iv = nv["userdata"];
+						if (iv > inst.instance_vars.length || typeof inst.instance_vars[iv] !== "number")
+							break;
+						inst.instance_vars[iv] = value;
+						break;
+					}
+				}
+			}
+			if (created)
+			{
+				this.runtime.trigger(Object.getPrototypeOf(type.plugin).cnds.OnCreated, inst);
+			}
+		}
+		for (i = 0, count = netInstToRemove.length; i < count; ++i)
+		{
+			ro["removeNetInstance"](netInstToRemove[i]);
+		}
+		netInstToRemove.length = 0;
+	};
+	instanceProto.trackObjectHistories = function ()
+	{
+		var hosttime = this.mp["getHostInputArrivalTime"]();
+		var i, len;
+		for (i = 0, len = this.trackObjects.length; i < len; ++i)
+		{
+			this.trackObjectHistory(this.trackObjects[i], hosttime);
+		}
+	};
+	function ObjectHistory(inst_)
+	{
+		this.inst = inst_;
+		this.history = [];
+	};
+	ObjectHistory.prototype.getLastDelta = function (tag, i)
+	{
+		if (this.history.length < 2)
+			return 0;		// not yet enough data
+		var from = this.history[this.history.length - 2];
+		var to = this.history[this.history.length - 1];
+		switch (tag) {
+		case "x":
+			return to.x - from.x;
+		case "y":
+			return to.y - from.y;
+		case "a":
+			return to.angle - from.angle;
+		case "iv":
+			return to.ivs[i] - from.ivs[i];
+		}
+		return 0;
+	};
+	ObjectHistory.prototype.getInterp = function (tag, index, time, interp)
+	{
+		var i, len, h;
+		var prev = null;
+		var next = null;
+		for (i = 0, len = this.history.length; i < len; ++i)
+		{
+			h = this.history[i];
+			if (h.timestamp < time)
+				prev = h;
+			else
+			{
+				if (i + 1 < this.history.length)
+					next = this.history[i + 1];
+				break;
+			}
+		}
+		if (!prev)
+			return (void 0);
+		var prev_value = 0;
+		switch (tag) {
+		case "x":
+			prev_value = prev.x;
+			break;
+		case "y":
+			prev_value = prev.y;
+			break;
+		case "a":
+			prev_value = prev.angle;
+			break;
+		case "iv":
+			prev_value = prev.ivs[index];
+			break;
+		}
+		if (!next)
+			return prev_value;
+		var next_value = prev_value;
+		switch (tag) {
+		case "x":
+			next_value = next.x;
+			break;
+		case "y":
+			next_value = next.y;
+			break;
+		case "a":
+			next_value = next.angle;
+			break;
+		case "iv":
+			next_value = next.ivs[index];
+			break;
+		}
+		var x = cr.unlerp(prev.timestamp, next.timestamp, time);
+		return window["interpNetValue"](interp, prev_value, next_value, x, false);
+	};
+	ObjectHistory.prototype.applyCorrection = function (tag, index, correction)
+	{
+		var i, len, h;
+		for (i = 0, len = this.history.length; i < len; ++i)
+		{
+			h = this.history[i];
+			switch (tag) {
+			case "x":
+				h.x += correction;
+				break;
+			case "y":
+				h.y += correction;
+				break;
+			case "a":
+				h.angle += correction;
+				break;
+			case "iv":
+				h.ivs[index] += correction;
+				break;
+			}
+		};
+	};
+	function ObjectHistoryEntry(oh_)
+	{
+		this.oh = oh_;
+		this.timestamp = 0;
+		this.x = 0;
+		this.y = 0;
+		this.angle = 0;
+		this.ivs = [];
+	};
+	var history_cache = [];
+	function allocHistoryEntry(oh_)
+	{
+		var ret;
+		if (history_cache.length)
+		{
+			ret = history_cache.pop();
+			ret.oh = oh_;
+			return ret;
+		}
+		else
+			return new ObjectHistoryEntry(oh_);
+	};
+	function freeHistoryEntry(he)
+	{
+		he.ivs.length = 0;
+		if (history_cache.length < 1000)
+			history_cache.push(he);
+	};
+	instanceProto.trackObjectHistory = function (inst, hosttime)
+	{
+		if (!this.objectHistories.hasOwnProperty(inst.uid))
+			this.objectHistories[inst.uid] = new ObjectHistory(inst);
+		var oh = this.objectHistories[inst.uid];
+		var he = allocHistoryEntry(oh);
+		he.timestamp = hosttime;
+		he.x = inst.x;
+		he.y = inst.y;
+		he.angle = inst.angle;
+		cr.shallowAssignArray(he.ivs, inst.instance_vars);
+		oh.history.push(he);
+		while (oh.history.length > 0 && oh.history[0].timestamp <= (hosttime - 2000))
+			freeHistoryEntry(oh.history.shift());
+	};
+	var clientXerror = 0;
+	var clientYerror = 0;
+	var hostX = 0;
+	var hostY = 0;
+	function linearCorrect(current, target, delta, position, isPlatformBehavior)
+	{
+		var diff = target - current;
+		if (diff === 0)
+			return 0;
+		var abs_diff = cr.abs(diff);
+		if (abs_diff <= cr.abs(delta / 10) || (position && (abs_diff < 1 || abs_diff >= 1000)))
+			return diff;
+		var minimum_correction = abs_diff / 50;
+		if (isPlatformBehavior)
+			minimum_correction = cr.max(minimum_correction, 1);
+		var delta_correction = cr.abs(delta / 5);
+		if (position && abs_diff >= 10)
+		{
+			minimum_correction = abs_diff / 10;
+			delta_correction = cr.abs(delta / 2);
+		}
+		var abs_correction = cr.max(minimum_correction, delta_correction);
+		if (abs_correction > abs_diff)
+			abs_correction = abs_diff;
+		if (diff > 0)
+			return abs_correction;
+		else
+			return -abs_correction;
+	};
+	instanceProto.correctInputPrediction = function (inst, netinst, netvalues, simTime)
+	{
+		if (!this.objectHistories.hasOwnProperty(inst.uid))
+			return;		// no data yet, leave as is
+		var oh = this.objectHistories[inst.uid];
+		var j, latestupdate, host_value, my_value, nv, diff, iv, tag, interp, userdata, correction;
+		var lenj = netvalues.length;
+		var position_delta = cr.distanceTo(0, 0, oh.getLastDelta("x"), oh.getLastDelta("y"));
+		var isPlatformBehavior = !!inst.extra["isPlatformBehavior"];
+		for (j = 0; j < lenj; ++j)
+		{
+			nv = netvalues[j];
+			tag = nv["tag"];
+			userdata = nv["userdata"];
+			interp = nv["interp"];
+			latestupdate = netinst["getLatestUpdate"]();
+			if (!latestupdate)
+				continue;		// no data from server
+			host_value = latestupdate.data[j];
+			my_value = oh.getInterp(tag, userdata, latestupdate.timestamp, interp);
+			if (typeof my_value === "undefined")
+				continue;		// no local history yet
+			correction = 0;
+			switch (tag) {
+			case "x":
+				correction = linearCorrect(my_value, host_value, position_delta, true, isPlatformBehavior);
+				if (correction !== 0)
+				{
+					inst.x += correction;
+					inst.set_bbox_changed();
+				}
+				clientXerror = host_value - my_value + correction;
+				hostX = host_value;
+				break;
+			case "y":
+				correction = linearCorrect(my_value, host_value, position_delta, true, isPlatformBehavior);
+				if (correction !== 0)
+				{
+					inst.y += correction;
+					inst.set_bbox_changed();
+				}
+				clientYerror = host_value - my_value + correction;
+				hostY = host_value;
+				break;
+			case "a":
+				correction = cr.anglelerp(my_value, host_value, 0.5) - my_value;
+				if (correction !== 0)
+				{
+					inst.angle += correction;
+					inst.set_bbox_changed();
+				}
+				break;
+			case "iv":
+				iv = userdata;
+				if (iv > inst.instance_vars.length || typeof inst.instance_vars[iv] !== "number")
+					break;
+				if (!nv["clientvaluetag"])
+					inst.instance_vars[iv] = netinst["getInterp"](simTime, j);
+				break;
+			}
+			if (correction !== 0)
+				oh.applyCorrection(tag, userdata, correction);
+		}
+	};
+	instanceProto.setError = function (e)
+	{
+		if (!e)
+			this.errorMsg = "unknown error";
+		else if (typeof e === "string")
+			this.errorMsg = e;
+		else if (typeof e.message === "string")
+			this.errorMsg = e.message;
+		else if (typeof e.details === "string")
+			this.errorMsg = e.details;
+		else if (typeof e.data === "string")
+			this.errorMsg = e.data;
+		else if (typeof e.type === "string")
+			this.errorMsg = e.type;
+		else
+			this.errorMsg = "error";
+	};
+	instanceProto.onDestroy = function ()
+	{
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		return {
+		};
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+	};
+	function Cnds() {};
+	Cnds.prototype.OnServerList = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnSignallingError = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnSignallingConnected = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnSignallingDisconnected = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnSignallingLoggedIn = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnSignallingJoinedRoom = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnSignallingLeftRoom = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnSignallingKicked = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnPeerConnected = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnPeerDisconnected = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.SignallingIsConnected = function ()
+	{
+		return isSupported && this.mp["isConnected"]();
+	};
+	Cnds.prototype.SignallingIsLoggedIn = function ()
+	{
+		return isSupported && this.mp["isLoggedIn"]();
+	};
+	Cnds.prototype.SignallingIsInRoom = function ()
+	{
+		return isSupported && this.mp["isInRoom"]();
+	};
+	Cnds.prototype.IsHost = function ()
+	{
+		return isSupported && this.mp["isHost"]();
+	};
+	Cnds.prototype.IsSupported = function ()
+	{
+		return isSupported;
+	};
+	Cnds.prototype.OnPeerMessage = function (tag_)
+	{
+		return this.msgTag === tag_;
+	};
+	Cnds.prototype.OnAnyPeerMessage = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnClientUpdate = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnGameInstanceList = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnRoomList = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.IsReadyForInput = function ()
+	{
+		if (!isSupported)
+			return false;
+		return this.mp["isReadyForInput"]();
+	};
+	Cnds.prototype.ComparePeerCount = function (cmp_, x_)
+	{
+		var peercount = 0;
+		if (isSupported)
+			peercount = this.mp["getPeerCount"]();
+		return cr.do_cmp(peercount, cmp_, x_);
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.RequestServerList = function (url_)
+	{
+		if (!isSupported)
+			return;
+		this.mp["requestServerList"](url_);
+	};
+	Acts.prototype.SignallingConnect = function (url_)
+	{
+		if (!isSupported || this.mp["isConnected"]())
+			return;
+		this.signallingUrl = url_;
+		this.mp["signallingConnect"](url_);
+	};
+	Acts.prototype.SignallingDisconnect = function ()
+	{
+		if (!isSupported || !this.mp["isConnected"]())
+			return;
+		this.mp["signallingDisconnect"]();
+	};
+	Acts.prototype.AddICEServer = function (url_, username_, credential_)
+	{
+		if (!isSupported)
+			return;
+		var o = {
+			"urls": url_
+		};
+		if (username_)
+			o["username"] = username_;
+		if (credential_)
+			o["credential"] = credential_;
+		this.mp["mergeIceServerList"]([o]);
+	};
+	Acts.prototype.SignallingLogin = function (alias_)
+	{
+		if (!isSupported || !this.mp["isConnected"] || this.mp["isLoggedIn"]())
+			return;
+		this.mp["signallingLogin"](alias_);
+	};
+	Acts.prototype.SignallingJoinRoom = function (game_, instance_, room_, max_clients_)
+	{
+		if (!isSupported || !this.mp["isLoggedIn"]() || this.mp["isInRoom"]())
+			return;
+		this.mp["signallingJoinGameRoom"](game_, instance_, room_, max_clients_);
+	};
+	Acts.prototype.SignallingAutoJoinRoom = function (game_, instance_, room_, max_clients_, locking_)
+	{
+		if (!isSupported || !this.mp["isLoggedIn"]() || this.mp["isInRoom"]())
+			return;
+		this.mp["signallingAutoJoinGameRoom"](game_, instance_, room_, max_clients_, (locking_ === 0));
+	};
+	Acts.prototype.SignallingLeaveRoom = function ()
+	{
+		if (!isSupported || !this.mp["isInRoom"]())
+			return;
+		this.mp["signallingLeaveRoom"]();
+	};
+	Acts.prototype.DisconnectRoom = function ()
+	{
+		if (!isSupported)
+			return;
+		this.mp["disconnectRoom"](true);
+	};
+	function modeToDCType(mode_)
+	{
+		switch (mode_) {
+		case 0:		// reliable ordered
+			return "o";
+		case 1:		// reliable unordered
+			return "r";
+		case 2:		// unreliable
+			return "u";
+		default:
+			return "o";
+		}
+	};
+	Acts.prototype.SendPeerMessage = function (peerid_, tag_, message_, mode_)
+	{
+		if (!isSupported)
+			return;
+		if (!peerid_)
+			peerid_ = this.mp["getHostID"]();
+		var peer = this.mp["getPeerById"](peerid_);
+		if (!peer)
+			return;
+		peer["send"](modeToDCType(mode_), JSON.stringify({
+			"c": "m",			// command: message
+			"t": tag_,			// tag
+			"m": message_		// content
+		}));
+	};
+	Acts.prototype.HostBroadcastMessage = function (from_id_, tag_, message_, mode_)
+	{
+		if (!isSupported)
+			return;
+		var skip = this.mp["getPeerById"](from_id_);
+		var o = {
+			"c": "m",			// command: message
+			"t": tag_,			// tag
+			"f": (from_id_ || this.mp["getHostID"]()),
+			"m": message_		// content
+		};
+		this.mp["hostBroadcast"](modeToDCType(mode_), JSON.stringify(o), skip);
+	};
+	Acts.prototype.SimulateLatency = function (latency_, pdv_, loss_)
+	{
+		if (!isSupported)
+			return;
+		this.mp["setLatencySimulation"](latency_ * 1000, pdv_ * 1000, loss_);
+	};
+	instanceProto.doSyncObject = function (type_, data_, precision_, bandwidth_)
+	{
+		if (!isSupported)
+			return;
+		var ro = this.mp["registerObject"](type_, type_.sid, bandwidth_);
+		if (data_ === 1)		// position only
+		{
+			ro["addValue"](this.mp["INTERP_LINEAR"], precision_, "x");		// for x
+			ro["addValue"](this.mp["INTERP_LINEAR"], precision_, "y");		// for y
+		}
+		else if (data_ === 2)	// angle only
+		{
+			ro["addValue"](this.mp["INTERP_ANGULAR"], precision_, "a");		// for angle
+		}
+		else if (data_ === 3)	// position and angle
+		{
+			ro["addValue"](this.mp["INTERP_LINEAR"], precision_, "x");		// for x
+			ro["addValue"](this.mp["INTERP_LINEAR"], precision_, "y");		// for y
+			ro["addValue"](this.mp["INTERP_ANGULAR"], precision_, "a");		// for angle
+		}
+		this.typeToRo[type_] = ro;
+	};
+	Acts.prototype.SyncObject = function (type_, data_, precision_, bandwidth_)
+	{
+		if (!isSupported)
+			return;
+		var i, len;
+		if (type_.is_family)
+		{
+			for (i = 0, len = type_.members.length; i < len; ++i)
+			{
+				this.doSyncObject(type_.members[i], data_, precision_, bandwidth_);
+			}
+		}
+		else
+		{
+			this.doSyncObject(type_, data_, precision_, bandwidth_);
+		}
+	};
+	var prompted_bad_sync = false;
+	instanceProto.doSyncObjectInstanceVar = function (type_, var_, precision_, interp_, clientvaluetag_)
+	{
+		if (!isSupported)
+			return;
+		var ro = this.typeToRo[type_];
+		if (!ro)
+		{
+			return;
+		}
+		var ip = this.mp["INTERP_NONE"];
+		if (interp_ === 1)		// linear interpolation
+			ip = this.mp["INTERP_LINEAR"];
+		else if (interp_ === 2)	// angular interpolation
+			ip = this.mp["INTERP_ANGULAR"];
+		ro["addValue"](ip, precision_, "iv", var_, clientvaluetag_);
+	};
+	Acts.prototype.SyncObjectInstanceVar = function (type_, var_, precision_, interp_, clientvaluetag_)
+	{
+		if (!isSupported)
+			return;
+		var i, len, t;
+		if (type_.is_family)
+		{
+			for (i = 0, len = type_.members.length; i < len; ++i)
+			{
+				t = type_.members[i];
+				this.doSyncObjectInstanceVar(t, var_ + t.family_var_map[type_.family_index], precision_, interp_, clientvaluetag_);
+			}
+		}
+		else
+		{
+			this.doSyncObjectInstanceVar(type_, var_, precision_, interp_, clientvaluetag_);
+		}
+	};
+	Acts.prototype.AssociateObjectWithPeer = function (type_, peerid_)
+	{
+		if (!isSupported)
+			return;
+		var inst = type_.getFirstPicked();
+		if (!inst)
+			return;
+		var ro = this.typeToRo[type_];
+		if (!ro)
+			return;
+		var peer = this.mp["getPeerById"](peerid_);
+		if (!peer)
+			return;
+		if (this.mp["isHost"]())
+		{
+			ro["overrideNid"](inst.uid, peer["nid"]);
+			if (this.trackObjects.indexOf(inst) === -1)		// only add if not already tracked
+				this.trackObjects.push(inst);
+		}
+		this.instToPeer[inst.uid] = peer;
+		this.peerToInst[peer["id"]] = inst;
+	};
+	Acts.prototype.SetClientState = function (tag, x)
+	{
+		if (!isSupported)
+			return;
+		this.mp["setClientState"](tag, x);
+	};
+	Acts.prototype.AddClientInputValue = function (tag, precision, interpolation)
+	{
+		if (!isSupported)
+			return;
+		this.mp["addClientInputValue"](tag, precision, interpolation);
+	};
+	Acts.prototype.InputPredictObject = function (obj)
+	{
+		if (!isSupported || !obj)
+			return;
+		if (this.mp["isHost"]())
+			return;		// host mustn't input predict anything
+		var inst = obj.getFirstPicked();
+		if (!inst)
+			return;
+		if (this.inputPredictObjects.indexOf(inst) >= 0)
+			return;		// already input predicted
+		inst.extra["inputPredicted"] = true;
+		this.trackObjects.push(inst);
+		this.inputPredictObjects.push(inst);
+	};
+	Acts.prototype.SignallingRequestGameInstanceList = function (game_)
+	{
+		if (!isSupported)
+			return;
+		this.mp["signallingRequestGameInstanceList"](game_);
+	};
+	Acts.prototype.SignallingRequestRoomList = function (game_, instance_, which_)
+	{
+		if (!isSupported)
+			return;
+		var whichstr = "all";
+		if (which_ === 1)
+			whichstr = "unlocked";
+		else if (which_ === 2)
+			whichstr = "available";
+		this.mp["signallingRequestRoomList"](game_, instance_, whichstr);
+	};
+	Acts.prototype.SetBandwidthProfile = function (profile)
+	{
+		if (!isSupported)
+			return;
+		var updateRate, delay;
+		if (profile === 0)		// Internet
+		{
+			updateRate = 30;	// 30 Hz updates
+			delay = 80;			// 80 ms buffer
+		}
+		else
+		{
+			updateRate = 60;	// 60 Hz updates
+			delay = 40;			// 40ms buffer
+		}
+		this.mp["setBandwidthSettings"](updateRate, delay);
+	};
+	Acts.prototype.KickPeer = function (peerid_, reason_)
+	{
+		if (!isSupported)
+			return;
+		if (!this.mp["isHost"]())
+			return;
+		if (peerid_ === this.mp["getMyID"]())
+			return;		// can't kick self
+		var peer = this.mp["getPeerById"](peerid_);
+		if (!peer)
+			return;
+		peer["remove"](reason_, true /* isKick */);
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.ServerListCount = function (ret)
+	{
+		ret.set_int(serverlist.length);
+	};
+	Exps.prototype.ServerListURLAt = function (ret, i)
+	{
+		i = Math.floor(i);
+		if (i < 0 || i >= serverlist.length)
+			ret.set_string("");
+		else
+			ret.set_string(serverlist[i]["url"]);
+	};
+	Exps.prototype.ServerListNameAt = function (ret, i)
+	{
+		i = Math.floor(i);
+		if (i < 0 || i >= serverlist.length)
+			ret.set_string("");
+		else
+			ret.set_string(serverlist[i]["name"]);
+	};
+	Exps.prototype.ServerListOperatorAt = function (ret, i)
+	{
+		i = Math.floor(i);
+		if (i < 0 || i >= serverlist.length)
+			ret.set_string("");
+		else
+			ret.set_string(serverlist[i]["operator"]);
+	};
+	Exps.prototype.ServerListWebsiteAt = function (ret, i)
+	{
+		i = Math.floor(i);
+		if (i < 0 || i >= serverlist.length)
+			ret.set_string("");
+		else
+			ret.set_string(serverlist[i]["operator_website"]);
+	};
+	Exps.prototype.SignallingURL = function (ret)
+	{
+		ret.set_string(this.signallingUrl);
+	};
+	Exps.prototype.SignallingVersion = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["sigserv_version"] : "");
+	};
+	Exps.prototype.SignallingName = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["sigserv_name"] : "");
+	};
+	Exps.prototype.SignallingOperator = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["sigserv_operator"] : "");
+	};
+	Exps.prototype.SignallingMOTD = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["sigserv_motd"] : "");
+	};
+	Exps.prototype.MyAlias = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["getMyAlias"]() : "");
+	};
+	Exps.prototype.CurrentGame = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["getCurrentGame"]() : "");
+	};
+	Exps.prototype.CurrentInstance = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["getCurrentGameInstance"]() : "");
+	};
+	Exps.prototype.CurrentRoom = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["getCurrentRoom"]() : "");
+	};
+	Exps.prototype.ErrorMessage = function (ret)
+	{
+		ret.set_string(this.errorMsg);
+	};
+	Exps.prototype.MyID = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["getMyID"]() : "");
+	};
+	Exps.prototype.PeerID = function (ret)
+	{
+		ret.set_string(this.peerID);
+	};
+	Exps.prototype.PeerAlias = function (ret)
+	{
+		ret.set_string(this.peerAlias);
+	};
+	Exps.prototype.HostID = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["getHostID"]() : "");
+	};
+	Exps.prototype.HostAlias = function (ret)
+	{
+		ret.set_string(isSupported ? this.mp["getHostAlias"]() : "");
+	};
+	Exps.prototype.Message = function (ret)
+	{
+		ret.set_string(this.msgContent);
+	};
+	Exps.prototype.Tag = function (ret)
+	{
+		ret.set_string(this.msgTag);
+	};
+	Exps.prototype.FromID = function (ret)
+	{
+		ret.set_string(this.msgFromId);
+	};
+	Exps.prototype.FromAlias = function (ret)
+	{
+		ret.set_string(this.msgFromAlias);
+	};
+	Exps.prototype.PeerAliasFromID = function (ret, id_)
+	{
+		ret.set_string(isSupported ? this.mp["getAliasFromId"](id_) : "");
+	};
+	Exps.prototype.PeerLatency = function (ret, id_)
+	{
+		if (!isSupported)
+		{
+			ret.set_float(0);
+			return;
+		}
+		var peer = this.mp["getPeerById"](id_);
+		ret.set_float(peer ? peer["latency"] : 0);
+	};
+	Exps.prototype.PeerPDV = function (ret, id_)
+	{
+		if (!isSupported)
+		{
+			ret.set_float(0);
+			return;
+		}
+		var peer = this.mp["getPeerById"](id_);
+		ret.set_float(peer ? peer["pdv"] : 0);
+	};
+	Exps.prototype.StatOutboundCount = function (ret)
+	{
+		ret.set_int(isSupported ? this.mp["stats"]["outboundPerSec"] : 0);
+	};
+	Exps.prototype.StatOutboundBandwidth = function (ret)
+	{
+		ret.set_int(isSupported ? this.mp["stats"]["outboundBandwidthPerSec"] : 0);
+	};
+	Exps.prototype.StatInboundCount = function (ret)
+	{
+		ret.set_int(isSupported ? this.mp["stats"]["inboundPerSec"] : 0);
+	};
+	Exps.prototype.StatInboundBandwidth = function (ret)
+	{
+		ret.set_int(isSupported ? this.mp["stats"]["inboundBandwidthPerSec"] : 0);
+	};
+	Exps.prototype.PeerState = function (ret, id_, tag_)
+	{
+		if (!isSupported)
+		{
+			ret.set_float(0);
+			return;
+		}
+		var peer = this.mp["getPeerById"](id_);
+		ret.set_float(peer ? peer["getInterpClientState"](tag_) : 0);
+	};
+	Exps.prototype.ClientXError = function (ret)
+	{
+		ret.set_float(clientXerror);
+	};
+	Exps.prototype.ClientYError = function (ret)
+	{
+		ret.set_float(clientYerror);
+	};
+	Exps.prototype.HostX = function (ret)
+	{
+		ret.set_float(hostX);
+	};
+	Exps.prototype.HostY = function (ret)
+	{
+		ret.set_float(hostY);
+	};
+	Exps.prototype.PeerCount = function (ret)
+	{
+		ret.set_int(isSupported ? this.mp["getPeerCount"]() : 0);
+	};
+	Exps.prototype.ListInstanceCount = function (ret)
+	{
+		if (this.gameInstanceList)
+		{
+			ret.set_int(this.gameInstanceList.length);
+		}
+		else
+			ret.set_int(0);
+	};
+	Exps.prototype.ListInstanceName = function (ret, index)
+	{
+		index = Math.floor(index);
+		if (this.gameInstanceList)
+		{
+			if (index < 0 || index >= this.gameInstanceList.length)
+			{
+				ret.set_string("");
+			}
+			else
+				ret.set_string(this.gameInstanceList[index]["name"] || "");
+		}
+		else
+			ret.set_string("");
+	};
+	Exps.prototype.ListInstancePeerCount = function (ret, index)
+	{
+		index = Math.floor(index);
+		if (this.gameInstanceList)
+		{
+			if (index < 0 || index >= this.gameInstanceList.length)
+			{
+				ret.set_int(0);
+			}
+			else
+				ret.set_int(this.gameInstanceList[index]["peercount"] || 0);
+		}
+		else
+			ret.set_int(0);
+	};
+	Exps.prototype.ListRoomCount = function (ret)
+	{
+		ret.set_int(this.roomList ? this.roomList.length : 0);
+	};
+	function getListRoomAt(roomList, i)
+	{
+		if (!roomList)
+			return null;
+		i = Math.floor(i);
+		if (i < 0 || i >= roomList.length)
+			return null;
+		return roomList[i];
+	};
+	Exps.prototype.ListRoomName = function (ret, index)
+	{
+		var r = getListRoomAt(this.roomList, index);
+		ret.set_string(r ? r["name"] : "");
+	};
+	Exps.prototype.ListRoomPeerCount = function (ret, index)
+	{
+		var r = getListRoomAt(this.roomList, index);
+		ret.set_int(r ? r["peercount"] : 0);
+	};
+	Exps.prototype.ListRoomMaxPeerCount = function (ret, index)
+	{
+		var r = getListRoomAt(this.roomList, index);
+		ret.set_int(r ? r["maxpeercount"] : 0);
+	};
+	Exps.prototype.ListRoomState = function (ret, index)
+	{
+		var r = getListRoomAt(this.roomList, index);
+		ret.set_string(r ? r["state"] : "");
+	};
+	Exps.prototype.LeaveReason = function (ret)
+	{
+		ret.set_string(this.leaveReason);
+	};
+	instanceProto.lagCompensate = function (movingPeerID, fromPeerID, tag, interp)
+	{
+		if (!isSupported)
+			return 0;
+		if (!this.mp["isHost"]())
+			return 0;
+		var movePeer = this.mp["getPeerById"](movingPeerID);
+		if (!movePeer)
+			return 0;
+		var moveInst = this.getAssociatedInstanceForPeer(movePeer);
+		if (!moveInst)
+			return 0;
+		var ret = 0;
+		switch (tag) {
+		case "x":	ret = moveInst.x;		break;
+		case "y":	ret = moveInst.y;		break;
+		case "a":	ret = moveInst.angle;	break;
+		}
+		var fromPeer = this.mp["getPeerById"](fromPeerID);
+		if (!fromPeer || fromPeer === movePeer)		// cannot find that peer or is same peer
+			return ret;
+		if (this.mp["me"] === fromPeer)
+			return ret;
+		var delay = (fromPeer["latency"] + this.mp["clientDelay"]) * 2;
+		var moveUid = moveInst.uid;
+		if (!this.objectHistories.hasOwnProperty(moveUid))
+			return ret;		// no object history data yet
+		var oh = this.objectHistories[moveUid];
+		var interp = oh.getInterp(tag, 0, cr.performance_now() - delay, interp);
+		if (typeof interp === "undefined")
+			return ret;
+		else
+			return interp;
+	};
+	Exps.prototype.LagCompensateX = function (ret, movingPeerID, fromPeerID)
+	{
+		ret.set_float(this.lagCompensate(movingPeerID, fromPeerID, "x", this.mp["INTERP_LINEAR"]));
+	};
+	Exps.prototype.LagCompensateY = function (ret, movingPeerID, fromPeerID)
+	{
+		ret.set_float(this.lagCompensate(movingPeerID, fromPeerID, "y", this.mp["INTERP_LINEAR"]));
+	};
+	Exps.prototype.LagCompensateAngle = function (ret, movingPeerID, fromPeerID)
+	{
+		ret.set_float(cr.to_degrees(this.lagCompensate(movingPeerID, fromPeerID, "a", this.mp["INTERP_ANGULAR"])));
+	};
+	Exps.prototype.PeerIDAt = function (ret, i)
+	{
+		if (!isSupported)
+		{
+			ret.set_string("");
+			return;
+		}
+		i = Math.floor(i);
+		var peer = this.mp["getPeerAt"](i);
+		ret.set_string(peer ? peer["id"] : "");
+	};
+	Exps.prototype.PeerAliasAt = function (ret, i)
+	{
+		if (!isSupported)
+		{
+			ret.set_string("");
+			return;
+		}
+		i = Math.floor(i);
+		var peer = this.mp["getPeerAt"](i);
+		ret.set_string(peer ? peer["alias"] : "");
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
+var Photon = this["Photon"];
+var Exitgames = this["Exitgames"];
+cr.plugins_.Photon = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Photon.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.createLBC = function()
+	{
+		Photon["LoadBalancing"]["LoadBalancingClient"].prototype["roomFactory"] = function(name) {
+			var r = new Photon["LoadBalancing"]["Room"](name);
+			r["onPropertiesChange"] = function (changedCustomProps, byClient) {
+				self.changedPropertiesNames = [];
+				for(var i in changedCustomProps) {
+					self.changedPropertiesNames.push(i);
+				}
+			};
+			return r;
+		};
+		Photon["LoadBalancing"]["LoadBalancingClient"].prototype["actorFactory"] = function(name, actorNr, isLocal) {
+			var a = new Photon["LoadBalancing"]["Actor"](name, actorNr, isLocal);
+			a["onPropertiesChange"] = function (changedCustomProps, byClient) {
+				self.changedPropertiesNames = [];
+				for(var i in changedCustomProps) {
+					self.changedPropertiesNames.push(i);
+				}
+			};
+			return a;
+		};
+		Exitgames["Common"]["Logger"]["setExceptionHandler"](function(code, message) {
+			self.errorCode = code;
+			self.errorMsg = message;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onError, self);
+			return false;
+		});
+		this.lbc = new Photon["LoadBalancing"]["LoadBalancingClient"](this.Protocol, this.AppId, this.AppVersion);
+		var self = this;
+		this.lbc["setLogLevel"](this.LogLevel);
+		this.lbc["onError"] = function(errorCode, errorMsg) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onError, self);
+		};
+		this.lbc["onStateChange"] = function(state) {
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onStateChange, self);
+			var LBC = Photon["LoadBalancing"]["LoadBalancingClient"];
+			switch (state) {
+				case LBC["State"]["JoinedLobby"]:
+					self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onJoinedLobby, self);
+					break;
+				case LBC["State"]["Disconnected"]:
+					self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onDisconnected, self);
+					break;
+				default:
+					break;
+			}
+		};
+		this.lbc["onOperationResponse"] = function (errorCode, errorMsg, code, content) {
+			if (errorCode) {
+				switch (code) {
+					case Photon["LoadBalancing"]["Constants"]["OperationCode"]["JoinRandomGame"]:
+						switch (errorCode) {
+							case Photon["LoadBalancing"]["Constants"]["ErrorCode"]["NoRandomMatchFound"]:
+								self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onJoinRandomRoomNoMatchFound, self);
+								break;
+							default:
+								break;
+						}
+						break;
+					default:
+						self.errorCode = errorCode;
+						self.errorMsg = errorMsg;
+						self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onError, self);
+						break;
+				}
+			}
+		};
+		this.lbc["onEvent"] = function (code, data, actorNr) {
+			self.eventCode = code;
+			self.eventData = data;
+			self.actorNr = actorNr;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onEvent, self);
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onAnyEvent, self);
+        };
+		this.lbc["onRoomList"] = function (rooms){
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onRoomList, self);
+		};
+        this.lbc["onRoomListUpdate"] = function (rooms, roomsUpdated, roomsAdded, roomsRemoved) {
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onRoomListUpdate, self);
+		};
+        this.lbc["onMyRoomPropertiesChange"] = function () {
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onMyRoomPropertiesChange, self);
+		};
+        this.lbc["onActorPropertiesChange"] = function (actor) {
+			self.actorNr = actor["actorNr"];
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onActorPropertiesChange, self);
+		};
+		this.lbc["onJoinRoom"] = function (createdByMe) {
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onJoinRoom, self);
+		};
+		this.lbc["onActorJoin"] = function (actor) {
+			self.actorNr = actor["actorNr"];
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onActorJoin, self);
+		};
+		this.lbc["onActorLeave"] = function (actor) {
+			self.actorNr = actor["actorNr"];
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onActorLeave, self);
+        };
+		this.lbc["onActorSuspend"] = function (actor) {
+			self.actorNr = actor["actorNr"];
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onActorSuspend, self);
+        };
+		this.lbc["onWebRpcResult"] = function (errorCode, errorMsg, uriPath, resultCode, data) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.webRpcUriPath = uriPath;
+			self.webRpcResultCode = resultCode;
+			self.webRpcData = data;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onWebRpcResult, self);
+        };
+		this.lbc["onFindFriendsResult"] = function (errorCode, errorMsg, friends) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.friends = friends;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onFindFriendsResult, self);
+        };
+		this.lbc["onLobbyStats"] = function (errorCode, errorMsg, lobbies) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.lobbyStats = lobbies;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onLobbyStats, self);
+        };
+		this.lbc["onAppStats"] = function (errorCode, errorMsg, stats) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.appStats = stats;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onAppStats, self);
+        };
+    };
+	instanceProto.onCreate = function()
+	{
+		this.AppId = this.properties[0];
+		this.AppVersion = this.properties[1];
+		this.Protocol = ["ws", "wss"][this.properties[2]] == "wss" ? this.Protocol = Photon["ConnectionProtocol"]["Wss"] : Photon["ConnectionProtocol"]["Ws"];
+		this.Region = ["eu", "us", "asia", "jp", "au", "usw", "sa", "cae", "kr", "in", "cn", "ru", "rue"][this.properties[3]];
+		this.SelfHosted = this.properties[4] == 1;
+		this.SelfHostedAddress = this.properties[5];
+		this.LogLevel = this.properties[6] + Exitgames["Common"]["Logger"]["Level"]["DEBUG"]; // list starts from DEBUG = 1
+		this.createLBC();
+	}
+	instanceProto.onDestroy = function ()
+	{
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		return {
+		};
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+	};
+	instanceProto.draw = function(ctx)
+	{
+	};
+	instanceProto.drawGL = function (glw)
+	{
+	};
+	function Cnds() {}
+	Cnds.prototype.onError 					= function() { return true; };
+	Cnds.prototype.onStateChange 			= function() { return true; };
+	Cnds.prototype.onEvent 					= function(code) { return this.eventCode == code; };
+	Cnds.prototype.onAnyEvent 				= function() { return true; };
+	Cnds.prototype.onRoomList 				= function() { return true; };
+	Cnds.prototype.onRoomListUpdate 		= function() { return true; };
+	Cnds.prototype.onActorPropertiesChange 	= function() { return true; };
+	Cnds.prototype.onMyRoomPropertiesChange = function() { return true; };
+	Cnds.prototype.onJoinRoom 				= function() { return true; };
+	Cnds.prototype.onActorJoin 				= function() { return true; };
+	Cnds.prototype.onActorLeave 			= function() { return true; };
+	Cnds.prototype.onActorSuspend 			= function() { return true; };
+	Cnds.prototype.onWebRpcResult 			= function() { return true; };
+	Cnds.prototype.onFindFriendsResult 		= function() { return true; };
+	Cnds.prototype.onLobbyStats 			= function() { return true; };
+	Cnds.prototype.onAppStats 				= function() { return true; };
+	Cnds.prototype.onJoinedLobby 	 = function() { return true; };
+	Cnds.prototype.onJoinRandomRoomNoMatchFound  = function() { return true; };
+	Cnds.prototype.onDisconnected  = function() { return true; };
+	Cnds.prototype.isConnectedToNameServer = function ()
+	{
+		return this.lbc["isConnectedToNameServer"]();
+	};
+	Cnds.prototype.isConnectedToMaster = function ()
+	{
+		return this.lbc["isConnectedToMaster"]();
+	};
+	Cnds.prototype.isInLobby = function ()
+	{
+		return this.lbc["isInLobby"]();
+	};
+	Cnds.prototype.isJoinedToRoom = function ()
+	{
+		return this.lbc["isJoinedToRoom"]();
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {}
+	Acts.prototype.setUserId = function (userId)
+	{
+		this.lbc["setUserId"](userId);
+	};
+	Acts.prototype.setCustomAuthentication = function (authParameters, authType)
+	{
+		this.lbc["setCustomAuthentication"](authParameters, authType);
+	};
+	Acts.prototype.setHostingType = function (hostType)
+	{
+		this.SelfHosted = hostType == 1;
+	};
+	Acts.prototype.setSelfHostedAddress = function (address)
+	{
+		this.SelfHostedAddress = address;
+	};
+	Acts.prototype.setRegion = function (region)
+	{
+		this.Region = region;
+	};
+	Acts.prototype.setAppId = function (appId)
+	{
+		this.AppId = appId;
+	};
+	Acts.prototype.setAppVersion = function (version)
+	{
+		this.AppVersion = version;
+	};
+	Acts.prototype.connect = function ()
+	{
+		if (this.SelfHosted) {
+			this.lbc["setMasterServerAddress"](this.SelfHostedAddress);
+			this.lbc["connect"]();
+		}
+		else {
+			if (this.Region)
+				this.lbc["connectToRegionMaster"](this.Region);
+			else
+				this.lbc["connectToNameServer"]();
+		}
+	};
+	Acts.prototype.createRoom = function (name, lobbyName, lobbyType)
+	{
+		if (lobbyType == 1)  {
+			lobbyType = Photon["LoadBalancing"]["Constants"]["LobbyType"]["SqlLobby"]; // 2
+		}
+		var options = {
+			"lobbyName": lobbyName,
+			"lobbyType": lobbyType
+		};
+		this.lbc["createRoomFromMy"](name, options);
+	};
+	Acts.prototype.joinRoom = function (name, rejoin, createIfNotExists, lobbyName, lobbyType)
+	{
+		if (lobbyType == 1)  {
+			lobbyType = Photon["LoadBalancing"]["Constants"]["LobbyType"]["SqlLobby"]; // 2
+		}
+		var joinOptions = {
+			"rejoin": rejoin && true,
+			"createIfNotExists": createIfNotExists && true,
+			"lobbyName": lobbyName,
+			"lobbyType": lobbyType
+		};
+		var createOptions = {
+			"lobbyName": lobbyName,
+			"lobbyType": lobbyType
+		};
+		createOptions = this.lbc["copyCreateOptionsFromMyRoom"](createOptions);
+		this.lbc["joinRoom"](name, joinOptions, createOptions);
+	};
+	Acts.prototype.joinRandomRoom = function (matchMyRoom, matchmakingMode, lobbyName, lobbyType, sqlLobbyFilter)
+	{
+		if (lobbyType == 1)  {
+			lobbyType = Photon["LoadBalancing"]["Constants"]["LobbyType"]["SqlLobby"]; // 2
+		}
+		var options = {
+			"matchmakingMode": matchmakingMode,
+			"lobbyName": lobbyName,
+			"lobbyType": lobbyType,
+			"sqlLobbyFilter": sqlLobbyFilter
+		};
+		if (matchMyRoom) {
+			options.expectedCustomRoomProperties = this.lbc["myRoom"]()["_customProperties"];
+			options.expectedMaxPlayers = this.lbc["myRoom"]()["maxPlayers"];
+		}
+		this.lbc["joinRandomRoom"](options);
+	};
+	Acts.prototype.disconnect = function ()
+	{
+		this.lbc["disconnect"]();
+	};
+	Acts.prototype.suspendRoom = function ()
+	{
+		this.lbc["suspendRoom"]();
+	};
+	Acts.prototype.leaveRoom = function ()
+	{
+		this.lbc["leaveRoom"]();
+	};
+	Acts.prototype.raiseEvent = function (eventCode, data, interestGroup, cache, receivers, targetActors, webForward)
+	{
+		var opt = {
+			"interestGroup": interestGroup,
+			"cache": cache,
+			"receivers": receivers,
+			"webForward": webForward
+		};
+		if(typeof(targetActors) === "string" && targetActors) {
+			opt["targetActors"] = targetActors.split(",").map(function(x) { return parseInt(x); } );
+		}
+		this.lbc["raiseEvent"](eventCode, data, opt);
+	};
+	Acts.prototype.changeGroups = function (action, group)
+	{
+		switch (action) {
+			case 0: // Add
+				this.lbc["changeGroups"](null, [group]);
+				break;
+			case 1: // Add all current
+				this.lbc["changeGroups"](null ,[]);
+				break;
+			case 2: // Remove
+				this.lbc["changeGroups"]([group], null);
+				break;
+			case 3: // Remove all
+				this.lbc["changeGroups"]([], null);
+				break;
+		}
+	};
+	Acts.prototype.webRpc = function (uriPath, parameters, parametersType)
+	{
+		this.lbc["webRpc"](uriPath, parametersType ? JSON.parse(parameters) : parameters);
+	};
+	Acts.prototype.findFriends = function (friends)
+	{
+		this.lbc["findFriends"](friends.split(","));
+	};
+	Acts.prototype.requestLobbyStats = function ()
+	{
+		this.lbc["requestLobbyStats"]();
+	};
+	Acts.prototype.setMyActorName = function (name)
+	{
+		this.lbc["myActor"]()["setName"](name);
+	};
+	Acts.prototype.setPropertyOfActorByNr = function (nr, propName, propValue, webForward, checkAndSet, expectedValue)
+	{
+		this.lbc["myRoomActors"]()[nr]["setCustomProperty"](propName, propValue, webForward, checkAndSet ? expectedValue : undefined);
+	};
+	Acts.prototype.setPropertyOfMyRoom = function (propName, propValue, webForward, checkAndSet, expectedValue)
+	{
+		this.lbc["myRoom"]()["setCustomProperty"](propName, propValue, webForward, checkAndSet ? expectedValue : undefined);
+	};
+	Acts.prototype.setPropsListedInLobby = function (propNames)
+	{
+		this.lbc["myRoom"]()["setPropsListedInLobby"](propNames.split(","));
+	};
+	Acts.prototype.setMyRoomIsVisible = function (isVisisble)
+	{
+		this.lbc["myRoom"]()["setIsVisible"](isVisisble ? true : false);
+	};
+	Acts.prototype.setMyRoomIsOpen = function (isOpen)
+	{
+		this.lbc["myRoom"]()["setIsOpen"](isOpen ? true : false);
+	};
+	Acts.prototype.setMyRoomMaxPlayers = function (maxPlayers)
+	{
+		this.lbc["myRoom"]()["setMaxPlayers"](maxPlayers);
+	};
+	Acts.prototype.setEmptyRoomLiveTime = function (emptyRoomLiveTime)
+	{
+		this.lbc["myRoom"]()["setEmptyRoomLiveTime"](emptyRoomLiveTime);
+	};
+	Acts.prototype.setSuspendedPlayerLiveTime = function (suspendedPlayerLiveTime)
+	{
+		this.lbc["myRoom"]()["setSuspendedPlayerLiveTime"](suspendedPlayerLiveTime);
+	};
+	Acts.prototype.setUniqueUserId = function (unique)
+	{
+		this.lbc.logger.error("'Set unique userid check' action is deprecated. Please remove it from project. Rooms always created with 'unique userid check' set to true.");
+	};
+	Acts.prototype.reset = function ()
+	{
+		this.lbc["disconnect"]();
+		this.createLBC();
+		this.lbc["logger"]["info"]("Photon client reset.");
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {}
+	Exps.prototype.ErrorCode = function (ret)
+	{
+		ret.set_int(this.errorCode || 0);
+	};
+	Exps.prototype.ErrorMessage = function (ret)
+	{
+		ret.set_string(this.errorMsg || "");
+	};
+	Exps.prototype.State = function (ret)
+	{
+		ret.set_int(this.lbc["state"]);
+	};
+	Exps.prototype.StateString = function (ret)
+	{
+		ret.set_string(Photon["LoadBalancing"]["LoadBalancingClient"]["StateToName"](this.lbc["state"]));
+	};
+	Exps.prototype.UserId = function (ret)
+	{
+		ret.set_string(this.lbc["getUserId"]() || "");
+	};
+	Exps.prototype.MyActorNr = function (ret)
+	{
+		ret.set_int(this.lbc["myActor"]()["actorNr"]);
+	};
+	Exps.prototype.ActorNr = function (ret)
+	{
+		ret.set_int(this.actorNr || 0);
+	};
+	Exps.prototype.MyRoomName = function (ret)
+	{
+		ret.set_string(this.lbc["myRoom"]()["name"] || "");
+	};
+	Exps.prototype.EventCode = function (ret)
+	{
+		ret.set_int(this.eventCode || 0);
+	};
+	Exps.prototype.EventData = function (ret)
+	{
+		ret.set_any(this.eventData);
+	};
+	Exps.prototype.RoomCount = function (ret)
+	{
+		ret.set_int(this.lbc["availableRooms"]().length);
+	};
+	Exps.prototype.RoomNameAt = function (ret, i)
+	{
+		ret.set_string(this.lbc["availableRooms"]()[i]["name"] || "");
+	};
+	Exps.prototype.RoomMaxPlayers = function (ret, name)
+	{
+		var r = this.lbc["roomInfosDict"][name];
+		ret.set_int(r && r["maxPlayers"] || 0);
+	};
+	Exps.prototype.RoomIsOpen = function (ret, name)
+	{
+		var r = this.lbc["roomInfosDict"][name];
+		ret.set_int(r && r["isOpen"] ? 1 : 0);
+	};
+	Exps.prototype.RoomPlayerCount = function (ret, name)
+	{
+		var r = this.lbc["roomInfosDict"][name];
+		ret.set_int(r && r["playerCount"]);
+	};
+	Exps.prototype.RoomProperty = function (ret, name, propName)
+	{
+		var r = this.lbc["roomInfosDict"][name];
+		ret.set_any(r && r["getCustomProperty"](propName));
+	};
+	Exps.prototype.PropertyOfMyRoom = function (ret, propName)
+	{
+		var r = this.lbc["myRoom"]();
+		ret.set_any(r && r["getCustomProperty"](propName));
+	};
+	Exps.prototype.ActorCount = function (ret)
+	{
+		ret.set_int(this.lbc["myRoomActorsArray"]().length);
+	};
+	Exps.prototype.ActorNrAt = function (ret, i)
+	{
+		var a = this.lbc["myRoomActorsArray"]()[i];
+		ret.set_int(a && a["actorNr"] || -i);
+	};
+	Exps.prototype.ActorNameByNr = function (ret, nr)
+	{
+		var a = this.lbc["myRoomActors"]()[nr];
+		ret.set_string(a && a["name"] || "-- not found acorNr " + nr);
+	};
+	Exps.prototype.PropertyOfActorByNr = function (ret, nr, propName)
+	{
+		var a = this.lbc["myRoomActors"]()[nr];
+		ret.set_any(a && a["getCustomProperty"](propName));
+	};
+	Exps.prototype.ChangedPropertiesCount = function (ret)
+	{
+		ret.set_int(this.changedPropertiesNames && this.changedPropertiesNames.length || 0);
+	};
+	Exps.prototype.ChangedPropertyNameAt = function (ret, i)
+	{
+		ret.set_any(this.changedPropertiesNames && this.changedPropertiesNames[i]);
+	};
+	Exps.prototype.MasterActorNr = function (ret, i)
+	{
+		ret.set_int(this.lbc["myRoomMasterActorNr"]());
+	};
+	Exps.prototype.WebRpcUriPath = function (ret)
+	{
+		ret.set_string(this.webRpcUriPath || "");
+	};
+	Exps.prototype.WebRpcResultCode = function (ret)
+	{
+		ret.set_int(this.webRpcResultCode || 0);
+	};
+	Exps.prototype.WebRpcData = function (ret)
+	{
+		ret.set_any(this.webRpcData);
+	};
+	Exps.prototype.FriendOnline = function (ret, name)
+	{
+		ret.set_int(this.friends && this.friends[name] && this.friends[name]["online"] ? 1 : 0);
+	};
+	Exps.prototype.FriendRoom = function (ret, name)
+	{
+		ret.set_string(this.friends && this.friends[name] ? this.friends[name]["roomId"] : "");
+	};
+	Exps.prototype.LobbyStatsCount = function (ret)
+	{
+		ret.set_int(this.lobbyStats ? this.lobbyStats.length : 0);
+	};
+	Exps.prototype.LobbyStatsNameAt = function (ret, i)
+	{
+		ret.set_string(this.lobbyStats && this.lobbyStats[i] ? this.lobbyStats[i]["lobbyName"] : "");
+	};
+	Exps.prototype.LobbyStatsTypeAt = function (ret, i)
+	{
+		ret.set_int(this.lobbyStats && this.lobbyStats[i] ? this.lobbyStats[i]["lobbyType"] : 0);
+	};
+	Exps.prototype.LobbyStatsPeerCountAt = function (ret, i)
+	{
+		ret.set_int(this.lobbyStats && this.lobbyStats[i] ? this.lobbyStats[i]["peerCount"] : 0);
+	};
+	Exps.prototype.LobbyStatsGameCountAt = function (ret, i)
+	{
+		ret.set_int(this.lobbyStats && this.lobbyStats[i] ? this.lobbyStats[i]["gameCount"] : 0);
+	};
+	Exps.prototype.AppStatsPeerCount = function (ret, i)
+	{
+		ret.set_int(this.appStats ? this.appStats["peerCount"] : 0);
+	};
+	Exps.prototype.AppStatsMasterPeerCount = function (ret, i)
+	{
+		ret.set_int(this.appStats ? this.appStats["masterPeerCount"] : 0);
+	};
+	Exps.prototype.AppStatsGameCount = function (ret, i)
+	{
+		ret.set_int(this.appStats ? this.appStats["gameCount"] : 0);
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
 cr.plugins_.Sprite = function(runtime)
 {
 	this.runtime = runtime;
@@ -17185,6 +19125,640 @@ cr.plugins_.Sprite = function(runtime)
 }());
 ;
 ;
+cr.plugins_.Text = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Text.prototype;
+	pluginProto.onCreate = function ()
+	{
+		pluginProto.acts.SetWidth = function (w)
+		{
+			if (this.width !== w)
+			{
+				this.width = w;
+				this.text_changed = true;	// also recalculate text wrapping
+				this.set_bbox_changed();
+			}
+		};
+	};
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	typeProto.onLostWebGLContext = function ()
+	{
+		if (this.is_family)
+			return;
+		var i, len, inst;
+		for (i = 0, len = this.instances.length; i < len; i++)
+		{
+			inst = this.instances[i];
+			inst.mycanvas = null;
+			inst.myctx = null;
+			inst.mytex = null;
+		}
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+		if (this.recycled)
+			cr.clearArray(this.lines);
+		else
+			this.lines = [];		// for word wrapping
+		this.text_changed = true;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	var requestedWebFonts = {};		// already requested web fonts have an entry here
+	instanceProto.onCreate = function()
+	{
+		this.text = this.properties[0];
+		this.visible = (this.properties[1] === 0);		// 0=visible, 1=invisible
+		this.font = this.properties[2];
+		this.color = this.properties[3];
+		this.halign = this.properties[4];				// 0=left, 1=center, 2=right
+		this.valign = this.properties[5];				// 0=top, 1=center, 2=bottom
+		this.wrapbyword = (this.properties[7] === 0);	// 0=word, 1=character
+		this.lastwidth = this.width;
+		this.lastwrapwidth = this.width;
+		this.lastheight = this.height;
+		this.line_height_offset = this.properties[8];
+		this.facename = "";
+		this.fontstyle = "";
+		this.ptSize = 0;
+		this.textWidth = 0;
+		this.textHeight = 0;
+		this.parseFont();
+		this.mycanvas = null;
+		this.myctx = null;
+		this.mytex = null;
+		this.need_text_redraw = false;
+		this.last_render_tick = this.runtime.tickcount;
+		if (this.recycled)
+			this.rcTex.set(0, 0, 1, 1);
+		else
+			this.rcTex = new cr.rect(0, 0, 1, 1);
+		if (this.runtime.glwrap)
+			this.runtime.tickMe(this);
+;
+	};
+	instanceProto.parseFont = function ()
+	{
+		var arr = this.font.split(" ");
+		var i;
+		for (i = 0; i < arr.length; i++)
+		{
+			if (arr[i].substr(arr[i].length - 2, 2) === "pt")
+			{
+				this.ptSize = parseInt(arr[i].substr(0, arr[i].length - 2));
+				this.pxHeight = Math.ceil((this.ptSize / 72.0) * 96.0) + 4;	// assume 96dpi...
+				if (i > 0)
+					this.fontstyle = arr[i - 1];
+				this.facename = arr[i + 1];
+				for (i = i + 2; i < arr.length; i++)
+					this.facename += " " + arr[i];
+				break;
+			}
+		}
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		return {
+			"t": this.text,
+			"f": this.font,
+			"c": this.color,
+			"ha": this.halign,
+			"va": this.valign,
+			"wr": this.wrapbyword,
+			"lho": this.line_height_offset,
+			"fn": this.facename,
+			"fs": this.fontstyle,
+			"ps": this.ptSize,
+			"pxh": this.pxHeight,
+			"tw": this.textWidth,
+			"th": this.textHeight,
+			"lrt": this.last_render_tick
+		};
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+		this.text = o["t"];
+		this.font = o["f"];
+		this.color = o["c"];
+		this.halign = o["ha"];
+		this.valign = o["va"];
+		this.wrapbyword = o["wr"];
+		this.line_height_offset = o["lho"];
+		this.facename = o["fn"];
+		this.fontstyle = o["fs"];
+		this.ptSize = o["ps"];
+		this.pxHeight = o["pxh"];
+		this.textWidth = o["tw"];
+		this.textHeight = o["th"];
+		this.last_render_tick = o["lrt"];
+		this.text_changed = true;
+		this.lastwidth = this.width;
+		this.lastwrapwidth = this.width;
+		this.lastheight = this.height;
+	};
+	instanceProto.tick = function ()
+	{
+		if (this.runtime.glwrap && this.mytex && (this.runtime.tickcount - this.last_render_tick >= 300))
+		{
+			var layer = this.layer;
+            this.update_bbox();
+            var bbox = this.bbox;
+            if (bbox.right < layer.viewLeft || bbox.bottom < layer.viewTop || bbox.left > layer.viewRight || bbox.top > layer.viewBottom)
+			{
+				this.runtime.glwrap.deleteTexture(this.mytex);
+				this.mytex = null;
+				this.myctx = null;
+				this.mycanvas = null;
+			}
+		}
+	};
+	instanceProto.onDestroy = function ()
+	{
+		this.myctx = null;
+		this.mycanvas = null;
+		if (this.runtime.glwrap && this.mytex)
+			this.runtime.glwrap.deleteTexture(this.mytex);
+		this.mytex = null;
+	};
+	instanceProto.updateFont = function ()
+	{
+		this.font = this.fontstyle + " " + this.ptSize.toString() + "pt " + this.facename;
+		this.text_changed = true;
+		this.runtime.redraw = true;
+	};
+	instanceProto.draw = function(ctx, glmode)
+	{
+		ctx.font = this.font;
+		ctx.textBaseline = "top";
+		ctx.fillStyle = this.color;
+		ctx.globalAlpha = glmode ? 1 : this.opacity;
+		var myscale = 1;
+		if (glmode)
+		{
+			myscale = Math.abs(this.layer.getScale());
+			ctx.save();
+			ctx.scale(myscale, myscale);
+		}
+		if (this.text_changed || this.width !== this.lastwrapwidth)
+		{
+			this.type.plugin.WordWrap(this.text, this.lines, ctx, this.width, this.wrapbyword);
+			this.text_changed = false;
+			this.lastwrapwidth = this.width;
+		}
+		this.update_bbox();
+		var penX = glmode ? 0 : this.bquad.tlx;
+		var penY = glmode ? 0 : this.bquad.tly;
+		if (this.runtime.pixel_rounding)
+		{
+			penX = (penX + 0.5) | 0;
+			penY = (penY + 0.5) | 0;
+		}
+		if (this.angle !== 0 && !glmode)
+		{
+			ctx.save();
+			ctx.translate(penX, penY);
+			ctx.rotate(this.angle);
+			penX = 0;
+			penY = 0;
+		}
+		var endY = penY + this.height;
+		var line_height = this.pxHeight;
+		line_height += this.line_height_offset;
+		var drawX;
+		var i;
+		if (this.valign === 1)		// center
+			penY += Math.max(this.height / 2 - (this.lines.length * line_height) / 2, 0);
+		else if (this.valign === 2)	// bottom
+			penY += Math.max(this.height - (this.lines.length * line_height) - 2, 0);
+		for (i = 0; i < this.lines.length; i++)
+		{
+			drawX = penX;
+			if (this.halign === 1)		// center
+				drawX = penX + (this.width - this.lines[i].width) / 2;
+			else if (this.halign === 2)	// right
+				drawX = penX + (this.width - this.lines[i].width);
+			ctx.fillText(this.lines[i].text, drawX, penY);
+			penY += line_height;
+			if (penY >= endY - line_height)
+				break;
+		}
+		if (this.angle !== 0 || glmode)
+			ctx.restore();
+		this.last_render_tick = this.runtime.tickcount;
+	};
+	instanceProto.drawGL = function(glw)
+	{
+		if (this.width < 1 || this.height < 1)
+			return;
+		var need_redraw = this.text_changed || this.need_text_redraw;
+		this.need_text_redraw = false;
+		var layer_scale = this.layer.getScale();
+		var layer_angle = this.layer.getAngle();
+		var rcTex = this.rcTex;
+		var floatscaledwidth = layer_scale * this.width;
+		var floatscaledheight = layer_scale * this.height;
+		var scaledwidth = Math.ceil(floatscaledwidth);
+		var scaledheight = Math.ceil(floatscaledheight);
+		var absscaledwidth = Math.abs(scaledwidth);
+		var absscaledheight = Math.abs(scaledheight);
+		var halfw = this.runtime.draw_width / 2;
+		var halfh = this.runtime.draw_height / 2;
+		if (!this.myctx)
+		{
+			this.mycanvas = document.createElement("canvas");
+			this.mycanvas.width = absscaledwidth;
+			this.mycanvas.height = absscaledheight;
+			this.lastwidth = absscaledwidth;
+			this.lastheight = absscaledheight;
+			need_redraw = true;
+			this.myctx = this.mycanvas.getContext("2d");
+		}
+		if (absscaledwidth !== this.lastwidth || absscaledheight !== this.lastheight)
+		{
+			this.mycanvas.width = absscaledwidth;
+			this.mycanvas.height = absscaledheight;
+			if (this.mytex)
+			{
+				glw.deleteTexture(this.mytex);
+				this.mytex = null;
+			}
+			need_redraw = true;
+		}
+		if (need_redraw)
+		{
+			this.myctx.clearRect(0, 0, absscaledwidth, absscaledheight);
+			this.draw(this.myctx, true);
+			if (!this.mytex)
+				this.mytex = glw.createEmptyTexture(absscaledwidth, absscaledheight, this.runtime.linearSampling, this.runtime.isMobile);
+			glw.videoToTexture(this.mycanvas, this.mytex, this.runtime.isMobile);
+		}
+		this.lastwidth = absscaledwidth;
+		this.lastheight = absscaledheight;
+		glw.setTexture(this.mytex);
+		glw.setOpacity(this.opacity);
+		glw.resetModelView();
+		glw.translate(-halfw, -halfh);
+		glw.updateModelView();
+		var q = this.bquad;
+		var tlx = this.layer.layerToCanvas(q.tlx, q.tly, true, true);
+		var tly = this.layer.layerToCanvas(q.tlx, q.tly, false, true);
+		var trx = this.layer.layerToCanvas(q.trx, q.try_, true, true);
+		var try_ = this.layer.layerToCanvas(q.trx, q.try_, false, true);
+		var brx = this.layer.layerToCanvas(q.brx, q.bry, true, true);
+		var bry = this.layer.layerToCanvas(q.brx, q.bry, false, true);
+		var blx = this.layer.layerToCanvas(q.blx, q.bly, true, true);
+		var bly = this.layer.layerToCanvas(q.blx, q.bly, false, true);
+		if (this.runtime.pixel_rounding || (this.angle === 0 && layer_angle === 0))
+		{
+			var ox = ((tlx + 0.5) | 0) - tlx;
+			var oy = ((tly + 0.5) | 0) - tly
+			tlx += ox;
+			tly += oy;
+			trx += ox;
+			try_ += oy;
+			brx += ox;
+			bry += oy;
+			blx += ox;
+			bly += oy;
+		}
+		if (this.angle === 0 && layer_angle === 0)
+		{
+			trx = tlx + scaledwidth;
+			try_ = tly;
+			brx = trx;
+			bry = tly + scaledheight;
+			blx = tlx;
+			bly = bry;
+			rcTex.right = 1;
+			rcTex.bottom = 1;
+		}
+		else
+		{
+			rcTex.right = floatscaledwidth / scaledwidth;
+			rcTex.bottom = floatscaledheight / scaledheight;
+		}
+		glw.quadTex(tlx, tly, trx, try_, brx, bry, blx, bly, rcTex);
+		glw.resetModelView();
+		glw.scale(layer_scale, layer_scale);
+		glw.rotateZ(-this.layer.getAngle());
+		glw.translate((this.layer.viewLeft + this.layer.viewRight) / -2, (this.layer.viewTop + this.layer.viewBottom) / -2);
+		glw.updateModelView();
+		this.last_render_tick = this.runtime.tickcount;
+	};
+	var wordsCache = [];
+	pluginProto.TokeniseWords = function (text)
+	{
+		cr.clearArray(wordsCache);
+		var cur_word = "";
+		var ch;
+		var i = 0;
+		while (i < text.length)
+		{
+			ch = text.charAt(i);
+			if (ch === "\n")
+			{
+				if (cur_word.length)
+				{
+					wordsCache.push(cur_word);
+					cur_word = "";
+				}
+				wordsCache.push("\n");
+				++i;
+			}
+			else if (ch === " " || ch === "\t" || ch === "-")
+			{
+				do {
+					cur_word += text.charAt(i);
+					i++;
+				}
+				while (i < text.length && (text.charAt(i) === " " || text.charAt(i) === "\t"));
+				wordsCache.push(cur_word);
+				cur_word = "";
+			}
+			else if (i < text.length)
+			{
+				cur_word += ch;
+				i++;
+			}
+		}
+		if (cur_word.length)
+			wordsCache.push(cur_word);
+	};
+	var linesCache = [];
+	function allocLine()
+	{
+		if (linesCache.length)
+			return linesCache.pop();
+		else
+			return {};
+	};
+	function freeLine(l)
+	{
+		linesCache.push(l);
+	};
+	function freeAllLines(arr)
+	{
+		var i, len;
+		for (i = 0, len = arr.length; i < len; i++)
+		{
+			freeLine(arr[i]);
+		}
+		cr.clearArray(arr);
+	};
+	pluginProto.WordWrap = function (text, lines, ctx, width, wrapbyword)
+	{
+		if (!text || !text.length)
+		{
+			freeAllLines(lines);
+			return;
+		}
+		if (width <= 2.0)
+		{
+			freeAllLines(lines);
+			return;
+		}
+		if (text.length <= 100 && text.indexOf("\n") === -1)
+		{
+			var all_width = ctx.measureText(text).width;
+			if (all_width <= width)
+			{
+				freeAllLines(lines);
+				lines.push(allocLine());
+				lines[0].text = text;
+				lines[0].width = all_width;
+				return;
+			}
+		}
+		this.WrapText(text, lines, ctx, width, wrapbyword);
+	};
+	function trimSingleSpaceRight(str)
+	{
+		if (!str.length || str.charAt(str.length - 1) !== " ")
+			return str;
+		return str.substring(0, str.length - 1);
+	};
+	pluginProto.WrapText = function (text, lines, ctx, width, wrapbyword)
+	{
+		var wordArray;
+		if (wrapbyword)
+		{
+			this.TokeniseWords(text);	// writes to wordsCache
+			wordArray = wordsCache;
+		}
+		else
+			wordArray = text;
+		var cur_line = "";
+		var prev_line;
+		var line_width;
+		var i;
+		var lineIndex = 0;
+		var line;
+		for (i = 0; i < wordArray.length; i++)
+		{
+			if (wordArray[i] === "\n")
+			{
+				if (lineIndex >= lines.length)
+					lines.push(allocLine());
+				cur_line = trimSingleSpaceRight(cur_line);		// for correct center/right alignment
+				line = lines[lineIndex];
+				line.text = cur_line;
+				line.width = ctx.measureText(cur_line).width;
+				lineIndex++;
+				cur_line = "";
+				continue;
+			}
+			prev_line = cur_line;
+			cur_line += wordArray[i];
+			line_width = ctx.measureText(cur_line).width;
+			if (line_width >= width)
+			{
+				if (lineIndex >= lines.length)
+					lines.push(allocLine());
+				prev_line = trimSingleSpaceRight(prev_line);
+				line = lines[lineIndex];
+				line.text = prev_line;
+				line.width = ctx.measureText(prev_line).width;
+				lineIndex++;
+				cur_line = wordArray[i];
+				if (!wrapbyword && cur_line === " ")
+					cur_line = "";
+			}
+		}
+		if (cur_line.length)
+		{
+			if (lineIndex >= lines.length)
+				lines.push(allocLine());
+			cur_line = trimSingleSpaceRight(cur_line);
+			line = lines[lineIndex];
+			line.text = cur_line;
+			line.width = ctx.measureText(cur_line).width;
+			lineIndex++;
+		}
+		for (i = lineIndex; i < lines.length; i++)
+			freeLine(lines[i]);
+		lines.length = lineIndex;
+	};
+	function Cnds() {};
+	Cnds.prototype.CompareText = function(text_to_compare, case_sensitive)
+	{
+		if (case_sensitive)
+			return this.text == text_to_compare;
+		else
+			return cr.equals_nocase(this.text, text_to_compare);
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.SetText = function(param)
+	{
+		if (cr.is_number(param) && param < 1e9)
+			param = Math.round(param * 1e10) / 1e10;	// round to nearest ten billionth - hides floating point errors
+		var text_to_set = param.toString();
+		if (this.text !== text_to_set)
+		{
+			this.text = text_to_set;
+			this.text_changed = true;
+			this.runtime.redraw = true;
+		}
+	};
+	Acts.prototype.AppendText = function(param)
+	{
+		if (cr.is_number(param))
+			param = Math.round(param * 1e10) / 1e10;	// round to nearest ten billionth - hides floating point errors
+		var text_to_append = param.toString();
+		if (text_to_append)	// not empty
+		{
+			this.text += text_to_append;
+			this.text_changed = true;
+			this.runtime.redraw = true;
+		}
+	};
+	Acts.prototype.SetFontFace = function (face_, style_)
+	{
+		var newstyle = "";
+		switch (style_) {
+		case 1: newstyle = "bold"; break;
+		case 2: newstyle = "italic"; break;
+		case 3: newstyle = "bold italic"; break;
+		}
+		if (face_ === this.facename && newstyle === this.fontstyle)
+			return;		// no change
+		this.facename = face_;
+		this.fontstyle = newstyle;
+		this.updateFont();
+	};
+	Acts.prototype.SetFontSize = function (size_)
+	{
+		if (this.ptSize === size_)
+			return;
+		this.ptSize = size_;
+		this.pxHeight = Math.ceil((this.ptSize / 72.0) * 96.0) + 4;	// assume 96dpi...
+		this.updateFont();
+	};
+	Acts.prototype.SetFontColor = function (rgb)
+	{
+		var newcolor = "rgb(" + cr.GetRValue(rgb).toString() + "," + cr.GetGValue(rgb).toString() + "," + cr.GetBValue(rgb).toString() + ")";
+		if (newcolor === this.color)
+			return;
+		this.color = newcolor;
+		this.need_text_redraw = true;
+		this.runtime.redraw = true;
+	};
+	Acts.prototype.SetWebFont = function (familyname_, cssurl_)
+	{
+		if (this.runtime.isDomFree)
+		{
+			cr.logexport("[Construct 2] Text plugin: 'Set web font' not supported on this platform - the action has been ignored");
+			return;		// DC todo
+		}
+		var self = this;
+		var refreshFunc = (function () {
+							self.runtime.redraw = true;
+							self.text_changed = true;
+						});
+		if (requestedWebFonts.hasOwnProperty(cssurl_))
+		{
+			var newfacename = "'" + familyname_ + "'";
+			if (this.facename === newfacename)
+				return;	// no change
+			this.facename = newfacename;
+			this.updateFont();
+			for (var i = 1; i < 10; i++)
+			{
+				setTimeout(refreshFunc, i * 100);
+				setTimeout(refreshFunc, i * 1000);
+			}
+			return;
+		}
+		var wf = document.createElement("link");
+		wf.href = cssurl_;
+		wf.rel = "stylesheet";
+		wf.type = "text/css";
+		wf.onload = refreshFunc;
+		document.getElementsByTagName('head')[0].appendChild(wf);
+		requestedWebFonts[cssurl_] = true;
+		this.facename = "'" + familyname_ + "'";
+		this.updateFont();
+		for (var i = 1; i < 10; i++)
+		{
+			setTimeout(refreshFunc, i * 100);
+			setTimeout(refreshFunc, i * 1000);
+		}
+;
+	};
+	Acts.prototype.SetEffect = function (effect)
+	{
+		this.blend_mode = effect;
+		this.compositeOp = cr.effectToCompositeOp(effect);
+		cr.setGLBlend(this, effect, this.runtime.gl);
+		this.runtime.redraw = true;
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.Text = function(ret)
+	{
+		ret.set_string(this.text);
+	};
+	Exps.prototype.FaceName = function (ret)
+	{
+		ret.set_string(this.facename);
+	};
+	Exps.prototype.FaceSize = function (ret)
+	{
+		ret.set_int(this.ptSize);
+	};
+	Exps.prototype.TextWidth = function (ret)
+	{
+		var w = 0;
+		var i, len, x;
+		for (i = 0, len = this.lines.length; i < len; i++)
+		{
+			x = this.lines[i].width;
+			if (w < x)
+				w = x;
+		}
+		ret.set_int(w);
+	};
+	Exps.prototype.TextHeight = function (ret)
+	{
+		ret.set_int(this.lines.length * (this.pxHeight + this.line_height_offset) - this.line_height_offset);
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
 cr.plugins_.Touch = function(runtime)
 {
 	this.runtime = runtime;
@@ -18411,14 +20985,34 @@ cr.plugins_.Touch = function(runtime)
 cr.getObjectRefTable = function () { return [
 	cr.plugins_.AJAX,
 	cr.plugins_.Facebook,
-	cr.plugins_.Sprite,
+	cr.plugins_.Multiplayer,
 	cr.plugins_.Touch,
+	cr.plugins_.Sprite,
+	cr.plugins_.Text,
+	cr.plugins_.Photon,
 	cr.plugins_.Touch.prototype.cnds.OnTapGestureObject,
 	cr.plugins_.Facebook.prototype.acts.LogIn2,
+	cr.plugins_.Multiplayer.prototype.acts.SignallingConnect,
+	cr.plugins_.Multiplayer.prototype.acts.SignallingLogin,
 	cr.plugins_.Facebook.prototype.cnds.OnLogIn,
-	cr.plugins_.Sprite.prototype.acts.LoadURL,
+	cr.plugins_.Text.prototype.acts.SetText,
 	cr.plugins_.Facebook.prototype.exps.UserIDStr,
+	cr.plugins_.Multiplayer.prototype.cnds.OnSignallingLoggedIn,
+	cr.plugins_.Multiplayer.prototype.acts.SignallingJoinRoom,
+	cr.plugins_.Multiplayer.prototype.cnds.OnSignallingJoinedRoom,
+	cr.plugins_.Multiplayer.prototype.cnds.IsHost,
+	cr.plugins_.AJAX.prototype.acts.Post,
+	cr.system_object.prototype.acts.GoToLayout,
+	cr.plugins_.Multiplayer.prototype.cnds.OnPeerConnected,
+	cr.system_object.prototype.cnds.Every,
+	cr.plugins_.Photon.prototype.acts.raiseEvent,
+	cr.plugins_.Photon.prototype.exps.MyActorNr,
+	cr.plugins_.AJAX.prototype.exps.LastData,
+	cr.system_object.prototype.exps.str,
+	cr.plugins_.Photon.prototype.exps.ActorNrAt,
+	cr.plugins_.Photon.prototype.cnds.onEvent,
 	cr.plugins_.AJAX.prototype.acts.Request,
-	cr.plugins_.AJAX.prototype.cnds.OnAnyComplete,
-	cr.plugins_.AJAX.prototype.exps.LastData
+	cr.system_object.prototype.exps["int"],
+	cr.system_object.prototype.exps.tokenat,
+	cr.plugins_.Photon.prototype.exps.EventData
 ];};
