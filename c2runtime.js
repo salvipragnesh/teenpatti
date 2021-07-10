@@ -20427,14 +20427,10 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Multiplayer.prototype.acts.SignallingAutoJoinRoom,
 	cr.plugins_.Multiplayer.prototype.cnds.OnSignallingJoinedRoom,
 	cr.plugins_.Multiplayer.prototype.cnds.IsHost,
-	cr.plugins_.AJAX.prototype.acts.Post,
-	cr.plugins_.Multiplayer.prototype.exps.CurrentRoom,
-	cr.plugins_.Text.prototype.acts.SetText,
-	cr.system_object.prototype.acts.SetVar,
-	cr.plugins_.Facebook.prototype.exps.UserIDStr,
-	cr.system_object.prototype.acts.Wait,
-	cr.plugins_.Facebook.prototype.exps.FullName,
-	cr.system_object.prototype.cnds.Else,
 	cr.plugins_.Facebook.prototype.cnds.OnLogIn,
-	cr.system_object.prototype.acts.GoToLayout
+	cr.plugins_.Text.prototype.acts.SetText,
+	cr.plugins_.Facebook.prototype.exps.UserIDStr,
+	cr.plugins_.Multiplayer.prototype.exps.CurrentRoom,
+	cr.plugins_.Facebook.prototype.cnds.OnNameAvailable,
+	cr.plugins_.Facebook.prototype.exps.FullName
 ];};
