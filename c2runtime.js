@@ -15540,6 +15540,285 @@ cr.plugins_.AJAX = function(runtime)
 }());
 ;
 ;
+cr.plugins_.Button = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Button.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+		if (this.runtime.isDomFree)
+		{
+			cr.logexport("[Construct 2] Button plugin not supported on this platform - the object will not be created");
+			return;
+		}
+		this.isCheckbox = (this.properties[0] === 1);
+		this.inputElem = document.createElement("input");
+		if (this.isCheckbox)
+			this.elem = document.createElement("label");
+		else
+			this.elem = this.inputElem;
+		this.labelText = null;
+		this.inputElem.type = (this.isCheckbox ? "checkbox" : "button");
+		this.inputElem.id = this.properties[6];
+		jQuery(this.elem).appendTo(this.runtime.canvasdiv ? this.runtime.canvasdiv : "body");
+		if (this.isCheckbox)
+		{
+			jQuery(this.inputElem).appendTo(this.elem);
+			this.labelText = document.createTextNode(this.properties[1]);
+			jQuery(this.elem).append(this.labelText);
+			this.inputElem.checked = (this.properties[7] !== 0);
+			jQuery(this.elem).css("font-family", "sans-serif");
+			jQuery(this.elem).css("display", "inline-block");
+			jQuery(this.elem).css("color", "black");
+		}
+		else
+			this.inputElem.value = this.properties[1];
+		this.elem.title = this.properties[2];
+		this.inputElem.disabled = (this.properties[4] === 0);
+		this.autoFontSize = (this.properties[5] !== 0);
+		this.element_hidden = false;
+		if (this.properties[3] === 0)
+		{
+			jQuery(this.elem).hide();
+			this.visible = false;
+			this.element_hidden = true;
+		}
+		this.inputElem.onclick = (function (self) {
+			return function(e) {
+				e.stopPropagation();
+				self.runtime.isInUserInputEvent = true;
+				self.runtime.trigger(cr.plugins_.Button.prototype.cnds.OnClicked, self);
+				self.runtime.isInUserInputEvent = false;
+			};
+		})(this);
+		this.elem.addEventListener("touchstart", function (e) {
+			e.stopPropagation();
+		}, false);
+		this.elem.addEventListener("touchmove", function (e) {
+			e.stopPropagation();
+		}, false);
+		this.elem.addEventListener("touchend", function (e) {
+			e.stopPropagation();
+		}, false);
+		jQuery(this.elem).mousedown(function (e) {
+			e.stopPropagation();
+		});
+		jQuery(this.elem).mouseup(function (e) {
+			e.stopPropagation();
+		});
+		jQuery(this.elem).keydown(function (e) {
+			e.stopPropagation();
+		});
+		jQuery(this.elem).keyup(function (e) {
+			e.stopPropagation();
+		});
+		this.lastLeft = 0;
+		this.lastTop = 0;
+		this.lastRight = 0;
+		this.lastBottom = 0;
+		this.lastWinWidth = 0;
+		this.lastWinHeight = 0;
+		this.updatePosition(true);
+		this.runtime.tickMe(this);
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		var o = {
+			"tooltip": this.elem.title,
+			"disabled": !!this.inputElem.disabled
+		};
+		if (this.isCheckbox)
+		{
+			o["checked"] = !!this.inputElem.checked;
+			o["text"] = this.labelText.nodeValue;
+		}
+		else
+		{
+			o["text"] = this.elem.value;
+		}
+		return o;
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+		this.elem.title = o["tooltip"];
+		this.inputElem.disabled = o["disabled"];
+		if (this.isCheckbox)
+		{
+			this.inputElem.checked = o["checked"];
+			this.labelText.nodeValue = o["text"];
+		}
+		else
+		{
+			this.elem.value = o["text"];
+		}
+	};
+	instanceProto.onDestroy = function ()
+	{
+		if (this.runtime.isDomFree)
+			return;
+		jQuery(this.elem).remove();
+		this.elem = null;
+	};
+	instanceProto.tick = function ()
+	{
+		this.updatePosition();
+	};
+	var last_canvas_offset = null;
+	var last_checked_tick = -1;
+	instanceProto.updatePosition = function (first)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		var left = this.layer.layerToCanvas(this.x, this.y, true);
+		var top = this.layer.layerToCanvas(this.x, this.y, false);
+		var right = this.layer.layerToCanvas(this.x + this.width, this.y + this.height, true);
+		var bottom = this.layer.layerToCanvas(this.x + this.width, this.y + this.height, false);
+		var rightEdge = this.runtime.width / this.runtime.devicePixelRatio;
+		var bottomEdge = this.runtime.height / this.runtime.devicePixelRatio;
+		if (!this.visible || !this.layer.visible || right <= 0 || bottom <= 0 || left >= rightEdge || top >= bottomEdge)
+		{
+			if (!this.element_hidden)
+				jQuery(this.elem).hide();
+			this.element_hidden = true;
+			return;
+		}
+		if (left < 1)
+			left = 1;
+		if (top < 1)
+			top = 1;
+		if (right >= rightEdge)
+			right = rightEdge - 1;
+		if (bottom >= bottomEdge)
+			bottom = bottomEdge - 1;
+		var curWinWidth = window.innerWidth;
+		var curWinHeight = window.innerHeight;
+		if (!first && this.lastLeft === left && this.lastTop === top && this.lastRight === right && this.lastBottom === bottom && this.lastWinWidth === curWinWidth && this.lastWinHeight === curWinHeight)
+		{
+			if (this.element_hidden)
+			{
+				jQuery(this.elem).show();
+				this.element_hidden = false;
+			}
+			return;
+		}
+		this.lastLeft = left;
+		this.lastTop = top;
+		this.lastRight = right;
+		this.lastBottom = bottom;
+		this.lastWinWidth = curWinWidth;
+		this.lastWinHeight = curWinHeight;
+		if (this.element_hidden)
+		{
+			jQuery(this.elem).show();
+			this.element_hidden = false;
+		}
+		var offx = Math.round(left) + jQuery(this.runtime.canvas).offset().left;
+		var offy = Math.round(top) + jQuery(this.runtime.canvas).offset().top;
+		jQuery(this.elem).css("position", "absolute");
+		jQuery(this.elem).offset({left: offx, top: offy});
+		jQuery(this.elem).width(Math.round(right - left));
+		jQuery(this.elem).height(Math.round(bottom - top));
+		if (this.autoFontSize)
+			jQuery(this.elem).css("font-size", ((this.layer.getScale(true) / this.runtime.devicePixelRatio) - 0.2) + "em");
+	};
+	instanceProto.draw = function(ctx)
+	{
+	};
+	instanceProto.drawGL = function(glw)
+	{
+	};
+	function Cnds() {};
+	Cnds.prototype.OnClicked = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.IsChecked = function ()
+	{
+		return this.isCheckbox && this.inputElem.checked;
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.SetText = function (text)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		if (this.isCheckbox)
+			this.labelText.nodeValue = text;
+		else
+			this.elem.value = text;
+	};
+	Acts.prototype.SetTooltip = function (text)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.elem.title = text;
+	};
+	Acts.prototype.SetVisible = function (vis)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.visible = (vis !== 0);
+	};
+	Acts.prototype.SetEnabled = function (en)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.inputElem.disabled = (en === 0);
+	};
+	Acts.prototype.SetFocus = function ()
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.inputElem.focus();
+	};
+	Acts.prototype.SetBlur = function ()
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.inputElem.blur();
+	};
+	Acts.prototype.SetCSSStyle = function (p, v)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		jQuery(this.elem).css(p, v);
+	};
+	Acts.prototype.SetChecked = function (c)
+	{
+		if (this.runtime.isDomFree || !this.isCheckbox)
+			return;
+		this.inputElem.checked = (c === 1);
+	};
+	Acts.prototype.ToggleChecked = function ()
+	{
+		if (this.runtime.isDomFree || !this.isCheckbox)
+			return;
+		this.inputElem.checked = !this.inputElem.checked;
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	pluginProto.exps = new Exps();
+}());
+;
+;
 cr.plugins_.Facebook = function(runtime)
 {
 	this.runtime = runtime;
@@ -17298,6 +17577,577 @@ cr.plugins_.Multiplayer = function(runtime)
 		i = Math.floor(i);
 		var peer = this.mp["getPeerAt"](i);
 		ret.set_string(peer ? peer["alias"] : "");
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
+var Photon = this["Photon"];
+var Exitgames = this["Exitgames"];
+cr.plugins_.Photon = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Photon.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.createLBC = function()
+	{
+		Photon["LoadBalancing"]["LoadBalancingClient"].prototype["roomFactory"] = function(name) {
+			var r = new Photon["LoadBalancing"]["Room"](name);
+			r["onPropertiesChange"] = function (changedCustomProps, byClient) {
+				self.changedPropertiesNames = [];
+				for(var i in changedCustomProps) {
+					self.changedPropertiesNames.push(i);
+				}
+			};
+			return r;
+		};
+		Photon["LoadBalancing"]["LoadBalancingClient"].prototype["actorFactory"] = function(name, actorNr, isLocal) {
+			var a = new Photon["LoadBalancing"]["Actor"](name, actorNr, isLocal);
+			a["onPropertiesChange"] = function (changedCustomProps, byClient) {
+				self.changedPropertiesNames = [];
+				for(var i in changedCustomProps) {
+					self.changedPropertiesNames.push(i);
+				}
+			};
+			return a;
+		};
+		Exitgames["Common"]["Logger"]["setExceptionHandler"](function(code, message) {
+			self.errorCode = code;
+			self.errorMsg = message;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onError, self);
+			return false;
+		});
+		this.lbc = new Photon["LoadBalancing"]["LoadBalancingClient"](this.Protocol, this.AppId, this.AppVersion);
+		var self = this;
+		this.lbc["setLogLevel"](this.LogLevel);
+		this.lbc["onError"] = function(errorCode, errorMsg) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onError, self);
+		};
+		this.lbc["onStateChange"] = function(state) {
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onStateChange, self);
+			var LBC = Photon["LoadBalancing"]["LoadBalancingClient"];
+			switch (state) {
+				case LBC["State"]["JoinedLobby"]:
+					self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onJoinedLobby, self);
+					break;
+				case LBC["State"]["Disconnected"]:
+					self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onDisconnected, self);
+					break;
+				default:
+					break;
+			}
+		};
+		this.lbc["onOperationResponse"] = function (errorCode, errorMsg, code, content) {
+			if (errorCode) {
+				switch (code) {
+					case Photon["LoadBalancing"]["Constants"]["OperationCode"]["JoinRandomGame"]:
+						switch (errorCode) {
+							case Photon["LoadBalancing"]["Constants"]["ErrorCode"]["NoRandomMatchFound"]:
+								self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onJoinRandomRoomNoMatchFound, self);
+								break;
+							default:
+								break;
+						}
+						break;
+					default:
+						self.errorCode = errorCode;
+						self.errorMsg = errorMsg;
+						self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onError, self);
+						break;
+				}
+			}
+		};
+		this.lbc["onEvent"] = function (code, data, actorNr) {
+			self.eventCode = code;
+			self.eventData = data;
+			self.actorNr = actorNr;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onEvent, self);
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onAnyEvent, self);
+        };
+		this.lbc["onRoomList"] = function (rooms){
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onRoomList, self);
+		};
+        this.lbc["onRoomListUpdate"] = function (rooms, roomsUpdated, roomsAdded, roomsRemoved) {
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onRoomListUpdate, self);
+		};
+        this.lbc["onMyRoomPropertiesChange"] = function () {
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onMyRoomPropertiesChange, self);
+		};
+        this.lbc["onActorPropertiesChange"] = function (actor) {
+			self.actorNr = actor["actorNr"];
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onActorPropertiesChange, self);
+		};
+		this.lbc["onJoinRoom"] = function (createdByMe) {
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onJoinRoom, self);
+		};
+		this.lbc["onActorJoin"] = function (actor) {
+			self.actorNr = actor["actorNr"];
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onActorJoin, self);
+		};
+		this.lbc["onActorLeave"] = function (actor) {
+			self.actorNr = actor["actorNr"];
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onActorLeave, self);
+        };
+		this.lbc["onActorSuspend"] = function (actor) {
+			self.actorNr = actor["actorNr"];
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onActorSuspend, self);
+        };
+		this.lbc["onWebRpcResult"] = function (errorCode, errorMsg, uriPath, resultCode, data) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.webRpcUriPath = uriPath;
+			self.webRpcResultCode = resultCode;
+			self.webRpcData = data;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onWebRpcResult, self);
+        };
+		this.lbc["onFindFriendsResult"] = function (errorCode, errorMsg, friends) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.friends = friends;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onFindFriendsResult, self);
+        };
+		this.lbc["onLobbyStats"] = function (errorCode, errorMsg, lobbies) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.lobbyStats = lobbies;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onLobbyStats, self);
+        };
+		this.lbc["onAppStats"] = function (errorCode, errorMsg, stats) {
+			self.errorCode = errorCode;
+			self.errorMsg = errorMsg;
+			self.appStats = stats;
+			self.runtime.trigger(cr.plugins_.Photon.prototype.cnds.onAppStats, self);
+        };
+    };
+	instanceProto.onCreate = function()
+	{
+		this.AppId = this.properties[0];
+		this.AppVersion = this.properties[1];
+		this.Protocol = ["ws", "wss"][this.properties[2]] == "wss" ? this.Protocol = Photon["ConnectionProtocol"]["Wss"] : Photon["ConnectionProtocol"]["Ws"];
+		this.Region = ["eu", "us", "asia", "jp", "au", "usw", "sa", "cae", "kr", "in", "cn", "ru", "rue"][this.properties[3]];
+		this.SelfHosted = this.properties[4] == 1;
+		this.SelfHostedAddress = this.properties[5];
+		this.LogLevel = this.properties[6] + Exitgames["Common"]["Logger"]["Level"]["DEBUG"]; // list starts from DEBUG = 1
+		this.createLBC();
+	}
+	instanceProto.onDestroy = function ()
+	{
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		return {
+		};
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+	};
+	instanceProto.draw = function(ctx)
+	{
+	};
+	instanceProto.drawGL = function (glw)
+	{
+	};
+	function Cnds() {}
+	Cnds.prototype.onError 					= function() { return true; };
+	Cnds.prototype.onStateChange 			= function() { return true; };
+	Cnds.prototype.onEvent 					= function(code) { return this.eventCode == code; };
+	Cnds.prototype.onAnyEvent 				= function() { return true; };
+	Cnds.prototype.onRoomList 				= function() { return true; };
+	Cnds.prototype.onRoomListUpdate 		= function() { return true; };
+	Cnds.prototype.onActorPropertiesChange 	= function() { return true; };
+	Cnds.prototype.onMyRoomPropertiesChange = function() { return true; };
+	Cnds.prototype.onJoinRoom 				= function() { return true; };
+	Cnds.prototype.onActorJoin 				= function() { return true; };
+	Cnds.prototype.onActorLeave 			= function() { return true; };
+	Cnds.prototype.onActorSuspend 			= function() { return true; };
+	Cnds.prototype.onWebRpcResult 			= function() { return true; };
+	Cnds.prototype.onFindFriendsResult 		= function() { return true; };
+	Cnds.prototype.onLobbyStats 			= function() { return true; };
+	Cnds.prototype.onAppStats 				= function() { return true; };
+	Cnds.prototype.onJoinedLobby 	 = function() { return true; };
+	Cnds.prototype.onJoinRandomRoomNoMatchFound  = function() { return true; };
+	Cnds.prototype.onDisconnected  = function() { return true; };
+	Cnds.prototype.isConnectedToNameServer = function ()
+	{
+		return this.lbc["isConnectedToNameServer"]();
+	};
+	Cnds.prototype.isConnectedToMaster = function ()
+	{
+		return this.lbc["isConnectedToMaster"]();
+	};
+	Cnds.prototype.isInLobby = function ()
+	{
+		return this.lbc["isInLobby"]();
+	};
+	Cnds.prototype.isJoinedToRoom = function ()
+	{
+		return this.lbc["isJoinedToRoom"]();
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {}
+	Acts.prototype.setUserId = function (userId)
+	{
+		this.lbc["setUserId"](userId);
+	};
+	Acts.prototype.setCustomAuthentication = function (authParameters, authType)
+	{
+		this.lbc["setCustomAuthentication"](authParameters, authType);
+	};
+	Acts.prototype.setHostingType = function (hostType)
+	{
+		this.SelfHosted = hostType == 1;
+	};
+	Acts.prototype.setSelfHostedAddress = function (address)
+	{
+		this.SelfHostedAddress = address;
+	};
+	Acts.prototype.setRegion = function (region)
+	{
+		this.Region = region;
+	};
+	Acts.prototype.setAppId = function (appId)
+	{
+		this.AppId = appId;
+	};
+	Acts.prototype.setAppVersion = function (version)
+	{
+		this.AppVersion = version;
+	};
+	Acts.prototype.connect = function ()
+	{
+		if (this.SelfHosted) {
+			this.lbc["setMasterServerAddress"](this.SelfHostedAddress);
+			this.lbc["connect"]();
+		}
+		else {
+			if (this.Region)
+				this.lbc["connectToRegionMaster"](this.Region);
+			else
+				this.lbc["connectToNameServer"]();
+		}
+	};
+	Acts.prototype.createRoom = function (name, lobbyName, lobbyType)
+	{
+		if (lobbyType == 1)  {
+			lobbyType = Photon["LoadBalancing"]["Constants"]["LobbyType"]["SqlLobby"]; // 2
+		}
+		var options = {
+			"lobbyName": lobbyName,
+			"lobbyType": lobbyType
+		};
+		this.lbc["createRoomFromMy"](name, options);
+	};
+	Acts.prototype.joinRoom = function (name, rejoin, createIfNotExists, lobbyName, lobbyType)
+	{
+		if (lobbyType == 1)  {
+			lobbyType = Photon["LoadBalancing"]["Constants"]["LobbyType"]["SqlLobby"]; // 2
+		}
+		var joinOptions = {
+			"rejoin": rejoin && true,
+			"createIfNotExists": createIfNotExists && true,
+			"lobbyName": lobbyName,
+			"lobbyType": lobbyType
+		};
+		var createOptions = {
+			"lobbyName": lobbyName,
+			"lobbyType": lobbyType
+		};
+		createOptions = this.lbc["copyCreateOptionsFromMyRoom"](createOptions);
+		this.lbc["joinRoom"](name, joinOptions, createOptions);
+	};
+	Acts.prototype.joinRandomRoom = function (matchMyRoom, matchmakingMode, lobbyName, lobbyType, sqlLobbyFilter)
+	{
+		if (lobbyType == 1)  {
+			lobbyType = Photon["LoadBalancing"]["Constants"]["LobbyType"]["SqlLobby"]; // 2
+		}
+		var options = {
+			"matchmakingMode": matchmakingMode,
+			"lobbyName": lobbyName,
+			"lobbyType": lobbyType,
+			"sqlLobbyFilter": sqlLobbyFilter
+		};
+		if (matchMyRoom) {
+			options.expectedCustomRoomProperties = this.lbc["myRoom"]()["_customProperties"];
+			options.expectedMaxPlayers = this.lbc["myRoom"]()["maxPlayers"];
+		}
+		this.lbc["joinRandomRoom"](options);
+	};
+	Acts.prototype.disconnect = function ()
+	{
+		this.lbc["disconnect"]();
+	};
+	Acts.prototype.suspendRoom = function ()
+	{
+		this.lbc["suspendRoom"]();
+	};
+	Acts.prototype.leaveRoom = function ()
+	{
+		this.lbc["leaveRoom"]();
+	};
+	Acts.prototype.raiseEvent = function (eventCode, data, interestGroup, cache, receivers, targetActors, webForward)
+	{
+		var opt = {
+			"interestGroup": interestGroup,
+			"cache": cache,
+			"receivers": receivers,
+			"webForward": webForward
+		};
+		if(typeof(targetActors) === "string" && targetActors) {
+			opt["targetActors"] = targetActors.split(",").map(function(x) { return parseInt(x); } );
+		}
+		this.lbc["raiseEvent"](eventCode, data, opt);
+	};
+	Acts.prototype.changeGroups = function (action, group)
+	{
+		switch (action) {
+			case 0: // Add
+				this.lbc["changeGroups"](null, [group]);
+				break;
+			case 1: // Add all current
+				this.lbc["changeGroups"](null ,[]);
+				break;
+			case 2: // Remove
+				this.lbc["changeGroups"]([group], null);
+				break;
+			case 3: // Remove all
+				this.lbc["changeGroups"]([], null);
+				break;
+		}
+	};
+	Acts.prototype.webRpc = function (uriPath, parameters, parametersType)
+	{
+		this.lbc["webRpc"](uriPath, parametersType ? JSON.parse(parameters) : parameters);
+	};
+	Acts.prototype.findFriends = function (friends)
+	{
+		this.lbc["findFriends"](friends.split(","));
+	};
+	Acts.prototype.requestLobbyStats = function ()
+	{
+		this.lbc["requestLobbyStats"]();
+	};
+	Acts.prototype.setMyActorName = function (name)
+	{
+		this.lbc["myActor"]()["setName"](name);
+	};
+	Acts.prototype.setPropertyOfActorByNr = function (nr, propName, propValue, webForward, checkAndSet, expectedValue)
+	{
+		this.lbc["myRoomActors"]()[nr]["setCustomProperty"](propName, propValue, webForward, checkAndSet ? expectedValue : undefined);
+	};
+	Acts.prototype.setPropertyOfMyRoom = function (propName, propValue, webForward, checkAndSet, expectedValue)
+	{
+		this.lbc["myRoom"]()["setCustomProperty"](propName, propValue, webForward, checkAndSet ? expectedValue : undefined);
+	};
+	Acts.prototype.setPropsListedInLobby = function (propNames)
+	{
+		this.lbc["myRoom"]()["setPropsListedInLobby"](propNames.split(","));
+	};
+	Acts.prototype.setMyRoomIsVisible = function (isVisisble)
+	{
+		this.lbc["myRoom"]()["setIsVisible"](isVisisble ? true : false);
+	};
+	Acts.prototype.setMyRoomIsOpen = function (isOpen)
+	{
+		this.lbc["myRoom"]()["setIsOpen"](isOpen ? true : false);
+	};
+	Acts.prototype.setMyRoomMaxPlayers = function (maxPlayers)
+	{
+		this.lbc["myRoom"]()["setMaxPlayers"](maxPlayers);
+	};
+	Acts.prototype.setEmptyRoomLiveTime = function (emptyRoomLiveTime)
+	{
+		this.lbc["myRoom"]()["setEmptyRoomLiveTime"](emptyRoomLiveTime);
+	};
+	Acts.prototype.setSuspendedPlayerLiveTime = function (suspendedPlayerLiveTime)
+	{
+		this.lbc["myRoom"]()["setSuspendedPlayerLiveTime"](suspendedPlayerLiveTime);
+	};
+	Acts.prototype.setUniqueUserId = function (unique)
+	{
+		this.lbc.logger.error("'Set unique userid check' action is deprecated. Please remove it from project. Rooms always created with 'unique userid check' set to true.");
+	};
+	Acts.prototype.reset = function ()
+	{
+		this.lbc["disconnect"]();
+		this.createLBC();
+		this.lbc["logger"]["info"]("Photon client reset.");
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {}
+	Exps.prototype.ErrorCode = function (ret)
+	{
+		ret.set_int(this.errorCode || 0);
+	};
+	Exps.prototype.ErrorMessage = function (ret)
+	{
+		ret.set_string(this.errorMsg || "");
+	};
+	Exps.prototype.State = function (ret)
+	{
+		ret.set_int(this.lbc["state"]);
+	};
+	Exps.prototype.StateString = function (ret)
+	{
+		ret.set_string(Photon["LoadBalancing"]["LoadBalancingClient"]["StateToName"](this.lbc["state"]));
+	};
+	Exps.prototype.UserId = function (ret)
+	{
+		ret.set_string(this.lbc["getUserId"]() || "");
+	};
+	Exps.prototype.MyActorNr = function (ret)
+	{
+		ret.set_int(this.lbc["myActor"]()["actorNr"]);
+	};
+	Exps.prototype.ActorNr = function (ret)
+	{
+		ret.set_int(this.actorNr || 0);
+	};
+	Exps.prototype.MyRoomName = function (ret)
+	{
+		ret.set_string(this.lbc["myRoom"]()["name"] || "");
+	};
+	Exps.prototype.EventCode = function (ret)
+	{
+		ret.set_int(this.eventCode || 0);
+	};
+	Exps.prototype.EventData = function (ret)
+	{
+		ret.set_any(this.eventData);
+	};
+	Exps.prototype.RoomCount = function (ret)
+	{
+		ret.set_int(this.lbc["availableRooms"]().length);
+	};
+	Exps.prototype.RoomNameAt = function (ret, i)
+	{
+		ret.set_string(this.lbc["availableRooms"]()[i]["name"] || "");
+	};
+	Exps.prototype.RoomMaxPlayers = function (ret, name)
+	{
+		var r = this.lbc["roomInfosDict"][name];
+		ret.set_int(r && r["maxPlayers"] || 0);
+	};
+	Exps.prototype.RoomIsOpen = function (ret, name)
+	{
+		var r = this.lbc["roomInfosDict"][name];
+		ret.set_int(r && r["isOpen"] ? 1 : 0);
+	};
+	Exps.prototype.RoomPlayerCount = function (ret, name)
+	{
+		var r = this.lbc["roomInfosDict"][name];
+		ret.set_int(r && r["playerCount"]);
+	};
+	Exps.prototype.RoomProperty = function (ret, name, propName)
+	{
+		var r = this.lbc["roomInfosDict"][name];
+		ret.set_any(r && r["getCustomProperty"](propName));
+	};
+	Exps.prototype.PropertyOfMyRoom = function (ret, propName)
+	{
+		var r = this.lbc["myRoom"]();
+		ret.set_any(r && r["getCustomProperty"](propName));
+	};
+	Exps.prototype.ActorCount = function (ret)
+	{
+		ret.set_int(this.lbc["myRoomActorsArray"]().length);
+	};
+	Exps.prototype.ActorNrAt = function (ret, i)
+	{
+		var a = this.lbc["myRoomActorsArray"]()[i];
+		ret.set_int(a && a["actorNr"] || -i);
+	};
+	Exps.prototype.ActorNameByNr = function (ret, nr)
+	{
+		var a = this.lbc["myRoomActors"]()[nr];
+		ret.set_string(a && a["name"] || "-- not found acorNr " + nr);
+	};
+	Exps.prototype.PropertyOfActorByNr = function (ret, nr, propName)
+	{
+		var a = this.lbc["myRoomActors"]()[nr];
+		ret.set_any(a && a["getCustomProperty"](propName));
+	};
+	Exps.prototype.ChangedPropertiesCount = function (ret)
+	{
+		ret.set_int(this.changedPropertiesNames && this.changedPropertiesNames.length || 0);
+	};
+	Exps.prototype.ChangedPropertyNameAt = function (ret, i)
+	{
+		ret.set_any(this.changedPropertiesNames && this.changedPropertiesNames[i]);
+	};
+	Exps.prototype.MasterActorNr = function (ret, i)
+	{
+		ret.set_int(this.lbc["myRoomMasterActorNr"]());
+	};
+	Exps.prototype.WebRpcUriPath = function (ret)
+	{
+		ret.set_string(this.webRpcUriPath || "");
+	};
+	Exps.prototype.WebRpcResultCode = function (ret)
+	{
+		ret.set_int(this.webRpcResultCode || 0);
+	};
+	Exps.prototype.WebRpcData = function (ret)
+	{
+		ret.set_any(this.webRpcData);
+	};
+	Exps.prototype.FriendOnline = function (ret, name)
+	{
+		ret.set_int(this.friends && this.friends[name] && this.friends[name]["online"] ? 1 : 0);
+	};
+	Exps.prototype.FriendRoom = function (ret, name)
+	{
+		ret.set_string(this.friends && this.friends[name] ? this.friends[name]["roomId"] : "");
+	};
+	Exps.prototype.LobbyStatsCount = function (ret)
+	{
+		ret.set_int(this.lobbyStats ? this.lobbyStats.length : 0);
+	};
+	Exps.prototype.LobbyStatsNameAt = function (ret, i)
+	{
+		ret.set_string(this.lobbyStats && this.lobbyStats[i] ? this.lobbyStats[i]["lobbyName"] : "");
+	};
+	Exps.prototype.LobbyStatsTypeAt = function (ret, i)
+	{
+		ret.set_int(this.lobbyStats && this.lobbyStats[i] ? this.lobbyStats[i]["lobbyType"] : 0);
+	};
+	Exps.prototype.LobbyStatsPeerCountAt = function (ret, i)
+	{
+		ret.set_int(this.lobbyStats && this.lobbyStats[i] ? this.lobbyStats[i]["peerCount"] : 0);
+	};
+	Exps.prototype.LobbyStatsGameCountAt = function (ret, i)
+	{
+		ret.set_int(this.lobbyStats && this.lobbyStats[i] ? this.lobbyStats[i]["gameCount"] : 0);
+	};
+	Exps.prototype.AppStatsPeerCount = function (ret, i)
+	{
+		ret.set_int(this.appStats ? this.appStats["peerCount"] : 0);
+	};
+	Exps.prototype.AppStatsMasterPeerCount = function (ret, i)
+	{
+		ret.set_int(this.appStats ? this.appStats["masterPeerCount"] : 0);
+	};
+	Exps.prototype.AppStatsGameCount = function (ret, i)
+	{
+		ret.set_int(this.appStats ? this.appStats["gameCount"] : 0);
 	};
 	pluginProto.exps = new Exps();
 }());
@@ -20413,24 +21263,42 @@ cr.plugins_.Touch = function(runtime)
 }());
 cr.getObjectRefTable = function () { return [
 	cr.plugins_.AJAX,
+	cr.plugins_.Button,
 	cr.plugins_.Facebook,
 	cr.plugins_.Multiplayer,
-	cr.plugins_.Sprite,
-	cr.plugins_.Text,
 	cr.plugins_.Touch,
+	cr.plugins_.Text,
+	cr.plugins_.Photon,
+	cr.plugins_.Sprite,
 	cr.plugins_.Touch.prototype.cnds.OnTapGestureObject,
 	cr.plugins_.Facebook.prototype.acts.LogIn2,
+	cr.plugins_.Facebook.prototype.cnds.OnLogIn,
+	cr.plugins_.Text.prototype.acts.SetVisible,
+	cr.plugins_.Sprite.prototype.acts.SetVisible,
+	cr.plugins_.Button.prototype.acts.SetVisible,
+	cr.plugins_.Facebook.prototype.cnds.OnNameAvailable,
+	cr.system_object.prototype.acts.Wait,
+	cr.system_object.prototype.acts.GoToLayout,
+	cr.system_object.prototype.cnds.OnLayoutStart,
 	cr.plugins_.Multiplayer.prototype.acts.SignallingConnect,
-	cr.plugins_.Multiplayer.prototype.cnds.OnSignallingConnected,
 	cr.plugins_.Multiplayer.prototype.acts.SignallingLogin,
-	cr.plugins_.Multiplayer.prototype.cnds.OnSignallingLoggedIn,
 	cr.plugins_.Multiplayer.prototype.acts.SignallingAutoJoinRoom,
+	cr.plugins_.Text.prototype.acts.SetText,
+	cr.plugins_.Facebook.prototype.exps.FullName,
+	cr.plugins_.Sprite.prototype.acts.LoadURL,
+	cr.plugins_.Facebook.prototype.exps.UserIDStr,
+	cr.plugins_.Button.prototype.acts.SetCSSStyle,
 	cr.plugins_.Multiplayer.prototype.cnds.OnSignallingJoinedRoom,
 	cr.plugins_.Multiplayer.prototype.cnds.IsHost,
-	cr.plugins_.Facebook.prototype.cnds.OnLogIn,
-	cr.plugins_.Text.prototype.acts.SetText,
-	cr.plugins_.Facebook.prototype.exps.UserIDStr,
+	cr.plugins_.AJAX.prototype.acts.Post,
 	cr.plugins_.Multiplayer.prototype.exps.CurrentRoom,
-	cr.plugins_.Facebook.prototype.cnds.OnNameAvailable,
-	cr.plugins_.Facebook.prototype.exps.FullName
+	cr.plugins_.Multiplayer.prototype.cnds.OnPeerConnected,
+	cr.plugins_.Button.prototype.cnds.OnClicked,
+	cr.plugins_.Photon.prototype.acts.raiseEvent,
+	cr.system_object.prototype.exps.str,
+	cr.plugins_.Photon.prototype.exps.ActorNrAt,
+	cr.plugins_.Photon.prototype.cnds.onEvent,
+	cr.system_object.prototype.cnds.EveryTick,
+	cr.plugins_.AJAX.prototype.acts.Request,
+	cr.plugins_.AJAX.prototype.exps.LastData
 ];};
