@@ -21966,6 +21966,8 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Multiplayer.prototype.exps.CurrentRoom,
 	cr.plugins_.Multiplayer.prototype.cnds.OnPeerConnected,
 	cr.system_object.prototype.cnds.EveryTick,
+	cr.plugins_.Function.prototype.acts.CallFunction,
+	cr.plugins_.Function.prototype.cnds.OnFunction,
 	cr.plugins_.AJAX.prototype.acts.Request,
 	cr.plugins_.AJAX.prototype.exps.LastData,
 	cr.plugins_.List.prototype.acts.AddItemAt,
