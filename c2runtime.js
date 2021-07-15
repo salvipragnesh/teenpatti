@@ -21294,11 +21294,11 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Multiplayer.prototype.exps.CurrentRoom,
 	cr.plugins_.Multiplayer.prototype.cnds.OnPeerConnected,
 	cr.plugins_.Button.prototype.cnds.OnClicked,
+	cr.system_object.prototype.cnds.EveryTick,
 	cr.plugins_.Photon.prototype.acts.raiseEvent,
 	cr.system_object.prototype.exps.str,
 	cr.plugins_.Photon.prototype.exps.ActorNrAt,
 	cr.plugins_.Photon.prototype.cnds.onEvent,
-	cr.system_object.prototype.cnds.EveryTick,
 	cr.plugins_.AJAX.prototype.acts.Request,
 	cr.plugins_.AJAX.prototype.exps.LastData
 ];};
