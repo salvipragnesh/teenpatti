@@ -22115,16 +22115,16 @@ cr.plugins_.Touch = function(runtime)
 }());
 cr.getObjectRefTable = function () { return [
 	cr.plugins_.AJAX,
-	cr.plugins_.Dictionary,
 	cr.plugins_.Button,
 	cr.plugins_.Facebook,
+	cr.plugins_.Dictionary,
 	cr.plugins_.Function,
 	cr.plugins_.List,
 	cr.plugins_.Multiplayer,
-	cr.plugins_.Touch,
-	cr.plugins_.Photon,
 	cr.plugins_.Text,
 	cr.plugins_.Sprite,
+	cr.plugins_.Photon,
+	cr.plugins_.Touch,
 	cr.plugins_.Touch.prototype.cnds.OnTapGestureObject,
 	cr.plugins_.Facebook.prototype.acts.LogIn2,
 	cr.plugins_.Facebook.prototype.cnds.OnLogIn,
@@ -22149,11 +22149,9 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Multiplayer.prototype.exps.CurrentRoom,
 	cr.plugins_.Multiplayer.prototype.cnds.OnPeerConnected,
 	cr.system_object.prototype.cnds.EveryTick,
-	cr.plugins_.Function.prototype.acts.CallFunction,
-	cr.plugins_.Function.prototype.cnds.OnFunction,
+	cr.system_object.prototype.cnds.For,
 	cr.plugins_.AJAX.prototype.acts.Request,
 	cr.plugins_.Dictionary.prototype.acts.AddKey,
 	cr.plugins_.AJAX.prototype.exps.LastData,
-	cr.plugins_.Dictionary.prototype.exps.Get,
-	cr.system_object.prototype.acts.RestartLayout
+	cr.plugins_.Dictionary.prototype.exps.Get
 ];};
