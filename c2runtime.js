@@ -17246,9 +17246,9 @@ cr.plugins_.sockjs = function(runtime)
 	pluginProto.exps = new Exps();
 }());
 cr.getObjectRefTable = function () { return [
+	cr.plugins_.Sprite,
 	cr.plugins_.sockjs,
 	cr.plugins_.Text,
-	cr.plugins_.Sprite,
 	cr.system_object.prototype.cnds.OnLayoutStart,
 	cr.plugins_.Text.prototype.acts.AppendText,
 	cr.system_object.prototype.acts.Wait,
